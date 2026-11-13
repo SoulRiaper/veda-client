@@ -2,7 +2,7 @@
  * Runtime counters for the template engine. Intended for diagnostics and
  * A/B comparisons, not as a stable public API.
  */
-export const TEMPLATE_ENGINE = 'templateresult-parts-v2';
+export const TEMPLATE_ENGINE = 'templateresult-parts-v3';
 
 export const templateStats = {
   compiles: 0,

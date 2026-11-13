@@ -122,7 +122,7 @@ A shell that owns `currentNet` and `selectedElement` and passes them to **direct
 
 ## 2. Layout holes (slots)
 
-Popups and cards often take a trigger and a body. The old pattern: parse `[slot="trigger"]` from `this.template`, store `outerHTML`, then remount with `_process` so expressions still work.
+Popups and cards often take a trigger and a body. The old pattern: parse `[slot="trigger"]` from `this.template`, store `outerHTML`, then remount and re-parse the markup so expressions still work.
 
 ### Do — project children into named holes
 
@@ -179,10 +179,10 @@ Nodes without `slot` go to `<${Slot}>` (default), including non-empty text.
   this.state.triggerTemplate = tpl.content.querySelector('[slot="trigger"]').outerHTML;
 }
 
-#mountTemplateToContainer(selector, html) {
+#mountTemplateToContainer(selector, markup) {
   const container = this.querySelector(selector);
-  container.innerHTML = html;
-  this._process(container, this._vedaEvalContext || this.state);
+  // 4.0: there is no _process() walker; expressions in raw innerHTML are inert.
+  container.innerHTML = markup;
 }
 ```
 

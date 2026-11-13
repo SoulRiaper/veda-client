@@ -151,11 +151,9 @@ constructor → connectedCallback → populate → added → update → render �
 
 **Reactive Integration:**
 
-Component state is automatically reactive:
-1. Sets internal flag: #isReactive = true
-2. Creates effect for each {expression} in template
-3. Stores effects in #renderEffects for cleanup
-4. Cleanup on disconnect or re-render
+Component state is automatically reactive. Each `{expression}` is owned by its
+Part and gets one internal effect. Part effects are stopped when the
+TemplateInstance is destroyed.
 
 ### Template Compilation and Parts
 
@@ -164,19 +162,23 @@ Since the template engine update the render pipeline is template-based:
 ```
 render() → TemplateResult {strings, values}
         → compileTemplate() (cached per call-site)
-        → CompiledTemplate: static <template> + PartDescriptor[]
+        → CompiledTemplate: <template> + text markers + element groups
         → TemplateInstance: cloned DOM + Part objects
-        → Part.setValue() / effect → minimal DOM write
+        → Part.setValues() / effect → minimal DOM write
 ```
 
-- `html` returns a `TemplateResult` that extends `String`, so existing code
-  that treats it as a string keeps working.
+- `html` returns a `TemplateResult` object, not a String. Mount it with
+  `render(result, container)` or from `Component.render()`.
 - `{}` expressions stay reactive and are compiled into Parts (text,
   attribute, property, event, ref, bind).
-- `${}` values are lazy template values; tag names, attribute names and
-  `is` are folded statically.
+- `${}` values are lazy template values. ChildParts use private text markers;
+  element Parts use `data-veda-element` markers and never rely on DOM paths.
 - On `update()` with the same template, the existing DOM tree and child
-  components are reused and only changed Parts are written.
+  components are reused and only changed Parts are written. Nested
+  `TemplateResult` instances are reused too.
+- `nothing`, `noChange` and `unsafeHTML` follow the Lit-style sentinel model.
+- The legacy `_process()` walker was removed in 4.0; rendering always goes
+  through compiled templates and Parts.
 - Full details and current limitations: [TEMPLATE_ENGINE.md](./TEMPLATE_ENGINE.md).
 
 ### Expression Processing

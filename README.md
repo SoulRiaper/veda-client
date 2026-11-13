@@ -129,14 +129,15 @@ The framework exports the following modules from `./src/index.js`:
 | Module | Export | Description | Source |
 |--------|--------|-------------|--------|
 | **Core** | `Component` | Base class for creating reactive web components | Component.js |
-|  | `html` | Template tag for safe HTML rendering | Component.js |
-|  | `safe` | Function to escape HTML and remove expressions | Component.js |
-|  | `raw` | Template tag for raw HTML (use with caution) | Component.js |
+|  | `html` | Template tag returning a `TemplateResult` | TemplateResult.js |
+|  | `render` | Mount/patch a `TemplateResult` into a container | Template.js |
+|  | `safe` | Escape HTML and remove `{expr}` from a string value | TemplateResult.js |
+|  | `raw` | String template tag for trusted markup returned from `render()` | TemplateResult.js |
 |  | `reactive` | Create reactive objects for state management | Component.js |
 |  | `effect` | Create auto-tracking effect | Component.js |
 |  | `computed` | Create computed value | Reactive.js |
-| **Template** | `TemplateResult` | String-compatible value returned by `html` | TemplateResult.js |
-|  | `PathBindingStrategy`, `defaultBindingStrategy` | Node lookup strategy for Parts | BindingStrategy.js |
+| **Template** | `TemplateResult` | Lit-style value returned by `html` (not a String) | TemplateResult.js |
+|  | `nothing`, `noChange`, `unsafeHTML` | Lit-style part sentinels/directive | TemplateResult.js |
 |  | `getTemplateCacheStats`, `resetTemplateStats`, `clearTemplateCache` | Template cache diagnostics | Template.js |
 | **Components** | `Loop` | List rendering with reconciliation | LoopComponent.js |
 |  | `If` | Conditional rendering | IfComponent.js |

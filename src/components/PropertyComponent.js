@@ -46,9 +46,7 @@ export default function PropertyComponent (Class = HTMLElement) {
       const valueText = value.toString().replace(/!\{/g, '!\u200B{');
 
       if (slot) {
-        const textNode = document.createTextNode(valueText);
-        textNode.__vedaProcessed = true; // Mark as processed to skip re-parsing
-        slot.replaceWith(textNode);
+        slot.replaceWith(document.createTextNode(valueText));
       } else {
         const node = fragment.firstElementChild;
         if (node) node.textContent = valueText;

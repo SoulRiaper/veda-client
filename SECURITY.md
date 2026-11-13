@@ -34,9 +34,10 @@ const template = raw`<div>${userInput}</div>`;
 
 ### Expression Injection Protection
 
-#### Safe Mode: `{expression}` - Property Access Only
+#### Simple Paths (no eval)
 
-Reactive expressions `{expression}` are **safe** - they only evaluate property access:
+An expression that is a plain property path is evaluated by traversal, without
+`eval`/`new Function`, so it stays CSP-compatible:
 
 ```javascript
 // ✅ SAFE - property access only
@@ -47,24 +48,21 @@ this.model.title = '<script>alert("XSS")</script>';
 // Rendered as text, not executed
 ```
 
-The `ExpressionParser` allows **only** dot notation, no operators or function calls:
-
 ```javascript
-// ✅ Supported (safe)
+// ✅ Simple paths (no eval)
 {this.user.name}
 {this.items.0.title}
-
-// ❌ Not supported (parser rejects)
-{alert('XSS')}
-{eval('malicious')}
-{this.doSomething()}
 ```
 
-This makes XSS via expression injection **impossible**.
+The data is inserted as text or as an attribute value, so malicious model
+content cannot become markup.
 
 #### Complex Expressions (auto-detected)
 
-When an expression contains operators, method calls, or other complex syntax (e.g., `{this.state.count > 0}`), the system **auto-detects** it and evaluates via `new Function()`. There is no separate syntax — the same `{expression}` braces are used for both simple property paths and complex expressions.
+Everything that is not a simple path — operators, ternaries, method calls —
+is auto-detected and compiled once with `new Function()`. The same
+`{expression}` braces are used for both forms. Function calls therefore **do**
+work, which means the expression source itself is code:
 
 **⚠️ IMPORTANT:** Complex expressions use `new Function()` internally (requires `unsafe-eval` in CSP).
 
@@ -181,16 +179,20 @@ npm install dompurify
 
 ### Event Handlers
 
-Event handlers use expression syntax and are **safe**:
+Handlers use `{expression}` and are resolved from the component/context when
+the event fires. A method reference or a path to a function is expected:
 
 ```javascript
-// ✅ SAFE - method reference only
+// ✅ SAFE - method or function path
 <button onclick="{handleClick}">Click</button>
-
-// ❌ Not supported (parser rejects)
-<button onclick="{alert('XSS')}">
-<button onclick="{this.doSomething(); alert('XSS')}">
+<button onclick="{this.handleClick}">Click</button>
+<button onclick="{this.state.handler}">Click</button>
 ```
+
+Call expressions are not evaluated as handlers: `{alert('XSS')}` does not run,
+the framework warns instead. Static inline handlers (`onclick="alert(1)"`)
+and `srcdoc` are compile errors in 4.0; use `{expression}` and
+`unsafeHTML()` respectively.
 
 ### Data Attributes
 

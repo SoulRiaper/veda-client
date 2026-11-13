@@ -1,3 +1,5 @@
+import type {TemplateResult} from './TemplateResult.js';
+
 export interface TemplateCacheStats {
   compiles: number;
   cacheHits: number;
@@ -12,23 +14,43 @@ export interface TemplateCacheStats {
   stringCacheSize: number;
 }
 
+export interface PartDescriptor {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface ElementGroup {
+  id: number;
+  component: Record<string, unknown> | null;
+  parts: PartDescriptor[];
+}
+
+export interface ChildPartDescriptor {
+  id: number;
+  segment: Record<string, unknown>;
+  anchor: 'text' | 'node';
+}
+
 export class CompiledTemplate {
   readonly template: HTMLTemplateElement;
   readonly source: string;
   readonly type: 'html' | 'raw';
   readonly meta: Record<string, unknown>;
-  readonly textParts: readonly unknown[];
-  readonly elementParts: readonly unknown[];
-  readonly components: readonly unknown[];
+  readonly elements: readonly ElementGroup[];
+  readonly childParts: readonly ChildPartDescriptor[];
   instantiate(context: object, host: object, options?: {
     result?: unknown;
     values?: readonly unknown[];
-    strategy?: unknown;
     nested?: boolean;
   }): unknown;
 }
 
 export const TEMPLATE_ENGINE: string;
+export function compileTemplate(input: TemplateResult | CompiledTemplate | string | null | undefined): CompiledTemplate;
+export function render(
+  result: TemplateResult | CompiledTemplate | string | null | undefined,
+  container: Element | DocumentFragment | ShadowRoot,
+): unknown;
 export function getTemplateCacheStats(): TemplateCacheStats;
 export function resetTemplateStats(): void;
 export function clearTemplateCache(): void;

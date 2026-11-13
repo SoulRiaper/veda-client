@@ -1,68 +1,69 @@
-# Template Engine (реализация варианта B)
+# Template Engine
 
-Статус: движок внедрён. `Component`, `Loop`, `If`, `Slot`, `Place`,
-`Property`, `Relation` и `Value` работают через `TemplateResult` +
-скомпилированные шаблоны + Part-ы. `Virtual` пока остаётся на собственном
-ручном пути `#prepareChildTemplates` (он не используется в проекте и
-отложен); `Component._process` им уже не вызывается.
+Статус: **beta / breaking change**, готовится к релизу 4.0.0; в `master`
+ещё не влит. Движок переведён на marker-based Parts по образцу lit-html:
+Part-ы находят свои узлы по маркерам, а не по путям в DOM. `Component`,
+`Loop`, `If`, `Slot`, `Place`, `Property`, `Relation` и `Value` используют
+новый путь. `Virtual` остаётся на собственном `#prepareChildTemplates`.
+Legacy-обходчик `Component._process` удалён в 4.0; рендер всегда идёт через
+скомпилированные шаблоны и Part-ы.
 
-## Что появилось
+## Файлы
 
 | Файл | Назначение |
 |---|---|
-| `src/template/TemplateResult.js` | `html`/`raw`/`safe`, `TemplateResult extends String` |
-| `src/template/Template.js` | компилятор, кеш, `CompiledTemplate` |
+| `src/template/TemplateResult.js` | `html`/`raw`/`safe`, `TemplateResult`, `nothing`/`noChange`/`unsafeHTML` |
+| `src/template/Template.js` | компилятор, маркеры, кеш, `CompiledTemplate`, `render()` |
 | `src/template/TemplateInstance.js` | инстанс шаблона и Part-ы |
-| `src/template/BindingStrategy.js` | сменная стратегия поиска узлов (path/reference) |
+| `src/template/markers.js` | общие константы маркеров для компилятора и рендерера |
 | `src/template/factories.js` | поздняя регистрация фабрик встроенных компонентов |
-| `src/template/TemplateResult.d.ts` | типы `TemplateResult` |
+| `src/template/stats.js` | диагностические счётчики |
+
+`BindingStrategy`/`PathBindingStrategy` удалены: стратегия фиксирована
+marker-based. Это breaking change.
 
 ## Публичный контракт
 
 ```js
-import { html, raw, safe, TemplateResult } from 'veda-client';
+import { html, render, unsafeHTML, nothing, noChange } from 'veda-client';
 
-const result = html`<div class="row {this.state.cls}">{this.state.title}</div>`;
+const result = html`<div class="row ${this.state.cls}">${this.state.title}</div>`;
+render(result, document.querySelector('#app'));
 ```
 
-- `html` возвращает `TemplateResult`.
-- `TemplateResult extends String`, поэтому работают:
-  - `String(result)`, `result.toString()`, `result.includes(...)`;
-  - `element.innerHTML = result`;
-  - конкатенация и передача в API, ожидающие строку.
-- `result.strings` и `result.values` доступны рендереру и инструментам.
-- `raw` по-прежнему возвращает обычную строку (исторический контракт).
-- `safe` не изменился.
+- `html` возвращает `TemplateResult`, **не** `String`.
+- `String(result)`/`result.toString()` остаются только как deprecated
+  диагностический сериализатор. Для рендера используйте `render()` или
+  `Component.render()`.
+- `render(result, container)` — Lit-style точка входа: первый рендер
+  монтирует шаблон, повторный с тем же call-site патчит DOM.
+- `nothing` очищает позицию, `noChange` оставляет предыдущее значение.
+- `unsafeHTML(value)` вставляет доверенный markup. Обычные строки всегда
+  являются текстом.
+- `raw` по-прежнему возвращает строку. `${raw`...`}` в `html` — это текст;
+  если нужен markup из значения, используйте `unsafeHTML`.
 
-## Пайплайн рендера
+## Маркеры и Part-ы
 
-```
-render()
-  → TemplateResult { strings, values }
-  → compileTemplate()
-      → кеш по identity strings + shape key
-      → сканирование HTML: {expr} и ${value}
-      → <template> со статическим скелетом
-      → PartDescriptor[] (text / attribute / property / event / ref / bind)
-  → CompiledTemplate.instantiate(context, host, options)
-      → clone скелета
-      → bindingStrategy.resolve(...) для каждого дескриптора
-      → создание дочерних компонентов
-      → создание Part-ов
-  → mount(container)  (только при первом рендере/смене шаблона)
-```
+При компиляции в шаблон вставляются служебные узлы:
 
-При повторном `update()` с тем же шаблоном:
+- **ChildPart** — пустой текстовый узел-маркер в позиции `${}`/`{expr}`.
+  Значения вставляются перед маркером; чужие Part-ы и соседние узлы не
+  сдвигаются.
+- **Element marker** — атрибут `data-veda-element` на элементе, у которого
+  есть Component/Attribute/Property/Event/Ref/Bind Part. При инстанцировании
+  маркер удаляется, Part-ы получают реальный элемент.
 
-```
-instance.setResult(newResult)
-  → части обновляют только изменившиеся значения
-  → DOM-узлы, дочерние компоненты, refs и слушатели сохраняются
-```
+Part-ы:
 
-Если `render()` вернул другой шаблон, старый инстанс уничтожается и
-монтируется новый. Поведение соответствует старому `replaceChildren`, но
-только при фактической смене шаблона.
+| Part | Что делает |
+|---|---|
+| `ChildPart` | текст, `TemplateResult`, `Node`, массив, `nothing`/`noChange`, `unsafeHTML` |
+| `AttributePart` | атрибут или свойство; boolean-атрибуты через `toggleAttribute` |
+| `PropertyPart` | `:prop` на native/custom element |
+| `EventPart` | один listener на элемент; handler резолвится в момент события |
+| `RefPart` | `ref` с восстановлением после `update()` |
+| `BindPart` | `bind` с проверкой простого пути |
 
 ## Поддерживаемый синтаксис
 
@@ -76,9 +77,8 @@ instance.setResult(newResult)
 <div ref="box"></div>
 ```
 
-Каждое выражение компилируется один раз (кеш `ExpressionParser.compile`) и
-подключается к Part-у через `effect`. Part пишет в DOM только при изменении
-значения.
+Каждое выражение компилируется один раз и подключается к Part-у через
+`effect`. Part пишет в DOM только при изменении значения.
 
 ### `${value}` — ленивое значение шаблона
 
@@ -86,123 +86,83 @@ instance.setResult(newResult)
 html`<div class="row ${this.state.cls}">${this.state.title}</div>`
 ```
 
-Правила позиционирования:
-
 | Позиция | Поведение |
 |---|---|
-| Имя тега `<${Comp}>`, `</${Comp}>` | статически сворачивается |
-| Имя атрибута `<div ${name}="...">` | статически сворачивается |
-| Сниппет атрибутов `${attrs}` | статически сворачивается как markup |
-| `is="${Comp}"` | статически сворачивается и экранируется |
+| Имя тега `<${Comp}>` | статически сворачивается и валидируется: только имя элемента |
+| Имя атрибута `<div ${name}="...">` | сворачивается и валидируется; `on*` — только с `{expression}` |
+| Сниппет атрибутов `${attrs}` | статический markup; запрещены `<`/`>`, `{}`, inline `on*` и `srcdoc` |
+| `is="${Comp}"` | класс с `static tag` или валидный custom-element tag; иное — ошибка |
 | Значение атрибута `class="a ${x}"` | `AttributePart` |
-| Значение атрибута без кавычек `class=${x}` | `AttributePart` |
-| `${}` внутри комментария, `<script>`, `<style>` | статически сворачивается и экранируется |
+| Значение атрибута без кавычек `class=${x}`, `class = ${x}` | `AttributePart` |
 | Текст `...${x}...` | `ChildPart` |
 | `TemplateResult`/`Node`/массив | `ChildPart` с вложенным рендером |
+| `${}` в `<script>`/`<style>` | **ошибка компиляции**; `{expression}` там тоже не работает |
+| `${}` в `key`/`as`/height на Loop/If/Virtual | **ошибка**: это статическая конфигурация |
+| `${}` в `ref` | **ошибка**: это статическое имя |
+| `${}` в `bind`/`on*` | **ошибка**: используйте `{expression}` |
+| `${}` во вложенном `<template>` | **ошибка**; `{expression}` там тоже не работает |
+| Статический `on*`-атрибут или `srcdoc` в шаблоне | **ошибка компиляции**: `{expression}` / `unsafeHTML()` |
 
-Значения `${}` не являются реактивными сами по себе: они обновляются при
-`update()`. Реактивность — за `{expr}`.
-
-Позиции «имя тега», «имя атрибута» и «сниппет атрибутов» вставляются как
-markup и должны содержать только доверенные значения.
+Динамические имена тегов/атрибутов и сниппеты валидируются: `${}` не может
+добавить элемент, `on*`-handler или `srcdoc`, в том числе через склейку имени
+из нескольких `${}` или пробел перед `=`. `on${name}="{expression}"`
+разрешён, `on${name}="code()"` — нет. Сниппет — статический markup: `<`/`>`,
+`{}`, inline `on*` и `srcdoc` бросают ошибку компиляции, а статические
+`on*`/`srcdoc` в шаблоне запрещены (для доверенного markup есть
+`unsafeHTML()`).
 
 ## Кеш
 
 - `WeakMap<TemplateStringsArray, Map<shape, CompiledTemplate>>` — один
   call-site компилируется один раз.
-- Для call-site дополнительно кешируются исходник с токенами и карта
-  `folded`/`dynamic` по индексам. Классификация зависит только от исходника,
-  поэтому на повторных рендерах HTML-сканер не запускается: пересчитывается
-  только `shape` по свёрнутым значениям.
-- `Map<string, CompiledTemplate>` (LRU, 1000) — для шаблонов, пришедших
-  строками (`this.template`, legacy-компоненты).
 - `shape` учитывает только статически свёрнутые значения (имена тегов,
-  `is`, raw-сниппеты). Динамические `${}` не создают новый шаблон.
-- `${}` внутри контента дочернего компонента пробрасываются в него как
-  `values`; родительский шаблон не перекомпилируется при их изменении.
-- `ExpressionParser` кеширует скомпилированные safe/complex выражения
+  атрибутов, `is`, attr-сниппеты). Динамические `${}` новый шаблон не
+  создают.
+- `Map<string, CompiledTemplate>` (LRU, 1000) — для шаблонов-строк,
+  включая `html('...')`.
+- `ExpressionParser` кеширует скомпилированные безопасные/сложные выражения
   (2000 записей).
 
-## Что изменилось в lifecycle
+## Lifecycle и значения
 
-- `update()` больше не пересоздаёт DOM, если шаблон тот же.
-- Дочерние компоненты переживают `update()` родителя.
-- `refs` стабильны между `update()`, включая refs, которые `Place`/`Slot`
-  пробрасывают компоненту-автору; при смене шаблона старые refs очищаются.
-- `rendered` по-прежнему ждёт дочерние компоненты, созданные при первом
-  рендере, в `If`-контенте и элементах `Loop`.
-- При disconnect DOM больше не удаляется принудительно — как и раньше,
-  узел остаётся в отсоединённом поддереве, но эффекты и слушатели
-  останавливаются.
-- `Place` перемещает узлы один раз и дальше патчит их на месте: focus,
-  state и анимации overlay сохраняются при `update()`.
-- `Slot` переиспользует свой `TemplateInstance`, если проекция и контекст
-  не изменились; fallback `${}` обновляется через values.
-- `Value`/`Property`/`Relation` переиспользуют узлы/инстансы неизменившихся
-  значений; при изменении значения заменяется только его диапазон.
-- DOM-узлы не оборачиваются reactive-proxy: native-методы (`Node.contains`,
-  `appendChild` и т.п.) требуют настоящий `Node`, а не Proxy. Это важно для
-  `refs`, которые могут лежать на reactive `state`.
+- `update()` с тем же `CompiledTemplate` патчит Part-ы и сохраняет DOM,
+  дочерние компоненты, `refs`, фокус.
+- Родитель передаёт свои `${}` values дочерним компонентам **только** если
+  дочерний компонент рендерит parent-authored `CompiledTemplate`. Если
+  ребёнок рендерит собственный `html`, его values не перезаписываются.
+- Вложенный `TemplateResult` переиспользует `TemplateInstance`, если
+  `CompiledTemplate` не изменился: фокус и состояние формы сохраняются.
+- `EventPart` резолвит handler при каждом событии, поэтому замена
+  `this.state.handler` подхватывается без remount.
+- При disconnect DOM отсоединённого поддерева не вычищается: останавливаются
+  эффекты/слушатели, но `textContent` не меняется.
+- При смене шаблона старый `TemplateInstance` уничтожается, новый
+  монтируется через `replaceChildren`.
 
-## Ограничения текущего этапа
+## Ограничения
 
-1. `raw` возвращает строку, а не `TemplateResult`.
-2. `Virtual` пока использует собственный `#prepareChildTemplates`; сам `Component._process` оставлен только для обратной совместимости и внешних компонентов.
-3. Проектируемый контент `Slot` берётся из `host.template` (legacy-строка),
-   поэтому `${}` внутри **спроецированного** контента остаётся запечённым;
-   fallback и обычные дочерние шаблоны values пробрасывают.
-4. Нет comment-маркеров, SSR/hydration и morph-стратегии. Стратегия по
-   умолчанию — `PathBindingStrategy` (прямые пути/ссылки, без лишних узлов).
-   `BindingStrategy` уже выделен как точка замены.
-5. `ChildPart` с вложенным `TemplateResult` получает его `values`, но
-   пересоздаёт вложенный инстанс при каждом коммите, если значение
-   структурное. Для шаблонов с частыми обновлениями это кандидат на
-   оптимизацию (переиспользование вложенного инстанса).
-6. `raw` возвращает строку. Если подставить её через `${raw`...`}` в
-   `html`-шаблон, она попадёт в DOM как текст (это безопасно, но это не
-   markup). Чтобы отрендерить доверенный markup, возвращайте `raw` из
-   `render()` или используйте отдельный `TemplateResult`.
+1. `Virtual` вне marker-engine.
+2. `Slot`-проекция использует legacy-строку `host.template`; `${}` внутри
+   спроецированного контента остаётся запечённым.
+3. Нет comment-маркеров, SSR/hydration и morph-стратегии.
+4. Нет директив `classMap`/`styleMap`/`repeat`/`cache`; есть только
+   `nothing`/`noChange`/`unsafeHTML`.
+5. `TemplateResult.toString()` — только диагностика; не используйте
+   `innerHTML = html` как способ рендера.
 
-
-## Диагностика в браузере
-
-Движок публикует несколько диагностических глобальных переменных:
+## Диагностика
 
 ```js
-window.__VEDA_TEMPLATE_ENGINE__      // 'templateresult-parts-v2'
-window.__VEDA_TEMPLATE_STATS__()     // снимок счётчиков
+window.__VEDA_TEMPLATE_STATS__()
+// {compiles, cacheHits, instances, mounts, patches, componentCreates, domWrites, ...}
 window.__VEDA_TEMPLATE_RESET_STATS__()
+window.__VEDA_TEMPLATE_ENGINE__ // 'templateresult-parts-v3'
 ```
-
-Счётчики:
-
-- `compiles` / `cacheHits` — сколько шаблонов скомпилировано и сколько раз
-  сработал кеш;
-- `instances` / `mounts` — сколько инстансов создано и смонтировано;
-- `patches` — сколько раз инстанс обновлялся через `setResult`/`setValues`;
-- `componentCreates` — сколько дочерних компонентов создано;
-- `domWrites` — сколько фактических записей в DOM сделали Part-ы.
-
-Для A/B-сравнения удобно дополнительно считать мутации DOM через
-`MutationObserver` и проверять, что при изменении модели/валидации не
-происходит массового `childList` (старый движок пересоздавал поддеревья).
 
 ## Проверка
 
-- `npm run test:unit` — 724 теста.
-- `npm run test:benchmark` — бенчмарки проходят.
-- `test/TemplateEngine.test.js` — новые тесты на кеш, patch, дочерние
-  компоненты, refs, nested TemplateResult и смену шаблона.
-
-Ориентировочный результат на синтетическом компоненте (JSDOM, 400
-элементов, 100 выражений, 100 обработчиков):
-
-| Операция | До | После |
-|---|---|---|
-| `update()` | 17.5 ms | ~0.38 ms |
-| Компиляций шаблона | 0 кеша | 1 на call-site |
-| Инстансов | новый DOM каждый раз | 1 при том же шаблоне |
-
-Числа получены на одноразовом синтетическом стенде (JSDOM) при разработке
-движка; воспроизводимого benchmark-скрипта в репозитории пока нет, поэтому
-перед публикацией их стоит перепроверить и добавить в `test/benchmarks/`.
+- `npm run test:unit` — 745 тестов.
+- `npm run test:benchmark` — 22 бенчмарка.
+- `test/TemplateEngine.test.js` — кеш, markers, patch, дочерние компоненты,
+  refs, nested TemplateResult, `nothing`/`noChange`/`unsafeHTML`, `render()`,
+  `is`/script/style/framework-attr ошибки.

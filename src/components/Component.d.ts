@@ -1,10 +1,9 @@
 import Model from '../Model.js';
 import type {TemplateResult} from '../template/TemplateResult.js';
 import type {CompiledTemplate} from '../template/Template.js';
-import type {BindingStrategy} from '../template/BindingStrategy.js';
 
-export function html(strings: TemplateStringsArray, ...values: any[]): TemplateResult;
-export function raw(strings: TemplateStringsArray, ...values: any[]): string;
+export function html(strings: TemplateStringsArray | string, ...values: any[]): TemplateResult;
+export function raw(strings: TemplateStringsArray | string, ...values: any[]): string;
 export function safe(value: any): string | string[];
 
 export interface ComponentState<M extends Model = Model> {
@@ -40,18 +39,12 @@ export interface ComponentInstance<M extends Model = Model> {
 
   // Internal helper method
   _findParentComponent(): HTMLElement | null;
-  _cleanupAllEventListeners(): void;
-  _getRenderEffectsCount(): number;
-  _extractRenderEffects(startIndex: number): Array<() => void>;
   _getEventListenersCount(): number;
-  _extractEventListeners(startIndex: number): Array<{node: EventTarget; eventName: string; handler: EventListener}>;
-  _stopEventListeners(listeners?: Array<{node: EventTarget; eventName: string; handler: EventListener}>): void;
 }
 
 export interface ComponentConstructor {
   new (): HTMLElement & ComponentInstance;
   tag: string;
-  bindingStrategy?: BindingStrategy | null;
   toString(): string;
 }
 

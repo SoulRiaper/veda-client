@@ -163,8 +163,8 @@ export default function VirtualComponent(Class = HTMLElement) {
       // Build wrapper DOM structure
       this.#buildDOM();
 
-      // Set template on child custom elements before adding to DOM
-      // This mimics what Component._process does for custom elements
+      // Set template on child custom elements before adding to DOM so the
+      // marker engine can compile their author-provided content.
       if (this.#isTableMode) {
         // In table mode: upgrade semantic elements, then put table into content div.
         // Sticky thead/tfoot are simulated via counter-transforms in #updateStickyHeaders.
@@ -210,7 +210,7 @@ export default function VirtualComponent(Class = HTMLElement) {
       this.#boundsEffect = effect(() => {
         const start = this.state._virtualStart;
         const end = this.state._virtualEnd;
-        if (start >= 0) {
+        if (start >= 0 && end >= 0) {
           this.#updateContentTransform();
           this.#updateStickyHeaders();
         }
@@ -474,7 +474,7 @@ export default function VirtualComponent(Class = HTMLElement) {
     }
 
     #prepareChildTemplates(container) {
-      // Prepare child templates — mimics the relevant parts of Component._process:
+      // Prepare child templates for the semantic elements Virtual owns:
       // custom elements (dash in tag), semantic loops (items attr), semantic ifs (condition attr)
       this.#childEvalContext = this.#createChildEvalContext();
       const elements = [...container.querySelectorAll('*')];

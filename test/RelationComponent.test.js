@@ -45,7 +45,6 @@ export default function ({ test, assert }) {
     const instance = Object.create(RelClass.prototype);
     instance.template = '<span class="rel-item">Item</span>';
     instance.state = { model: mockModel };
-    instance._process = () => {}; // Mock _process method
 
     await instance.renderValue(mockModel, container, 0);
 
@@ -62,7 +61,6 @@ export default function ({ test, assert }) {
     const instance = Object.create(RelClass.prototype);
     instance.template = '<div class="rel-direct">Direct HTML</div>';
     instance.state = { model: mockModel };
-    instance._process = () => {}; // Mock _process method
 
     await instance.renderValue(mockModel, container, 0);
 
@@ -82,7 +80,6 @@ export default function ({ test, assert }) {
     const instance = {
       template: '<custom-element></custom-element>',
       state: { model: mockModel },
-      _process() {},
       renderValue: RelClass.prototype.renderValue
     };
 
@@ -105,7 +102,6 @@ export default function ({ test, assert }) {
     const instance = {
       template: '<div>Content</div>',
       state: { model: originalModel },
-      _process() {},
       renderValue: RelClass.prototype.renderValue
     };
 

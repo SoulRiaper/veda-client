@@ -80,7 +80,7 @@ export default ({ test, assert }) => {
     const result = html`<div>${items}</div>`;
 
     // html() escapes HTML
-    assert(result.includes('&lt;b&gt;'), 'html() should escape HTML');
+    assert(String(result).includes('&lt;b&gt;'), 'html() should escape HTML');
 
     // This is a comparison test showing that raw() and html() behave differently
   });

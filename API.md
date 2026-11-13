@@ -1398,6 +1398,39 @@ class MyComponent extends Component(HTMLElement) {
 }
 ```
 
+### Template API (breaking)
+
+```js
+import { html, render, unsafeHTML, nothing, noChange } from 'veda-client';
+
+const view = (name) => html`<div class="greeting">${name}</div>`;
+render(view('Ada'), document.querySelector('#app'));
+```
+
+- `html` returns a `TemplateResult` object, **not** a String. Use `render()`
+  or return it from `Component.render()`.
+- `render(result, container)` mounts on the first call and patches in place
+  when the compiled template is unchanged.
+- `nothing` removes the value at that position; `noChange` keeps the previous
+  value; `unsafeHTML(value)` renders trusted markup. Ordinary strings are
+  always text.
+- `${}` is supported in text and attribute values. Dynamic tag names,
+  attribute names and `${attrs}` snippets are validated: a value cannot add
+  elements, `on*` handlers or `srcdoc`; `on${name}="{expression}"` is allowed.
+- `${}` snippets are **static markup**: they may not contain `<`, `>`, `{}`,
+  `on*` or `srcdoc`. Expressions must be written in the template itself.
+- `${}` is **not** supported in `<script>`/`<style>` or nested `<template>`
+  content — and there is no `{expression}` form there either; build those
+  nodes imperatively. `key`/`as`/height are static framework configuration,
+  `ref` is a static name, and `items`/`condition`/`bind`/`on*` take
+  `{expression}`.
+- A static (non-expression) `on*` attribute and a `srcdoc` attribute are
+  compile errors. Use `{expression}` for handlers and `unsafeHTML()` or
+  imperative DOM for `srcdoc`.
+- `TemplateResult` is marker-based; a `ChildPart` inserts nodes before its
+  own marker, so one structured value cannot shift a sibling Part.
+- `PathBindingStrategy`/`BindingStrategy` were removed in this release.
+
 ### Effect Cleanup Timing
 
 Effects are cleaned up automatically but timing matters:
@@ -1433,7 +1466,7 @@ class MyComponent extends Component(HTMLElement) {
 
 ```
 1. update() called
-2. Legacy #renderEffects/listeners cleaned up  ← compatibility safety net
+2. Part effects/listeners are owned by the TemplateInstance and cleaned when it is destroyed
 3. render() returns TemplateResult / string / CompiledTemplate
 4. compileTemplate() (cached)         ← no re-parse for the same call-site
 5. Same template? patch Parts         ← DOM and child components stay alive
@@ -1444,7 +1477,7 @@ class MyComponent extends Component(HTMLElement) {
 **Key points:**
 - Effect cleanup happens **BEFORE** `removed()` lifecycle
 - Same-template `update()` patches text/attributes and reuses child components
-- Built-in components no longer call `_process`; it remains for backward compatibility and custom components
+- The legacy `_process()` walker was removed in 4.0; rendering always goes through compiled templates and Parts
 - `Virtual` still has its own manual `#prepareChildTemplates` path
 - Different-template `update()` replaces the subtree and cleans old Parts
 - User effects (via `this.effect()`) persist across re-renders

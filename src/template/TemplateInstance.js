@@ -1,14 +1,20 @@
 import {effect} from '../Effect.js';
 import {toRaw} from '../Reactive.js';
 import ExpressionParser from '../components/ExpressionParser.js';
-import {isTemplateResult} from './TemplateResult.js';
+import {isTemplateResult, isUnsafeHTML, nothing, noChange} from './TemplateResult.js';
 import {compileTemplate} from './Template.js';
+import {ELEMENT_MARKER, TEXT_MARKER_RE} from './markers.js';
 import {factories} from './factories.js';
-import {defaultBindingStrategy} from './BindingStrategy.js';
 import {recordComponentTag, recordInstanceHost, recordTemplateStat} from './stats.js';
 
 const METHOD_NAME_RE = /^(?:this\.)?([A-Za-z_$][\w$]*)$/;
 const MAX_TREE_DEPTH = 20;
+
+const BOOLEAN_ATTRIBUTES = new Set([
+  'allowfullscreen', 'async', 'autofocus', 'autoplay', 'checked', 'controls',
+  'default', 'defer', 'disabled', 'hidden', 'inert', 'loop', 'multiple',
+  'muted', 'open', 'playsinline', 'readonly', 'required', 'reversed', 'selected',
+]);
 
 function findMethod(start, name) {
   let obj = start;
@@ -92,16 +98,19 @@ function assignExprPath(context, expr, value) {
 }
 
 function segmentValueText(value, type = 'text') {
-  if (value == null) return '';
+  if (value == null || value === nothing) return '';
   if (isTemplateResult(value)) {
     return type === 'attribute' ? String(value) : '';
   }
+  if (isUnsafeHTML(value)) return type === 'attribute' ? String(value.value) : '';
   if (typeof Node !== 'undefined' && value instanceof Node) return '';
   if (Array.isArray(value)) {
     return value
       .map(item => {
-        if (isTemplateResult(item) || (typeof Node !== 'undefined' && item instanceof Node)) return '';
-        return item == null ? '' : String(item);
+        if (item == null || item === nothing || item === noChange) return '';
+        if (isTemplateResult(item) || isUnsafeHTML(item) ||
+          (typeof Node !== 'undefined' && item instanceof Node)) return '';
+        return String(item);
       })
       .join(' ');
   }
@@ -111,6 +120,7 @@ function segmentValueText(value, type = 'text') {
 function evalSegments(segments, context, values, type) {
   let text = '';
   let hasNull = false;
+  let hasNothing = false;
 
   for (const segment of segments) {
     if (segment.type === 'static') {
@@ -121,8 +131,10 @@ function evalSegments(segments, context, values, type) {
     let value;
     if (segment.type === 'expr') {
       value = ExpressionParser.evaluateAuto(segment.code, context);
+      if (value === noChange) return {noChange: true};
       if (value == null) hasNull = true;
-      text += value == null ? '' : String(value);
+      if (value === nothing) hasNothing = true;
+      text += value == null || value === nothing ? '' : String(value);
       continue;
     }
 
@@ -130,178 +142,246 @@ function evalSegments(segments, context, values, type) {
       ? segment.value
       : values?.[segment.index];
 
+    if (value === noChange) return {noChange: true};
     if (value == null) hasNull = true;
+    if (value === nothing) hasNothing = true;
     text += segmentValueText(value, type);
   }
 
-  return {text, hasNull};
+  return {text, hasNull, hasNothing};
 }
 
-function hasExpressions(segments) {
-  return segments.some(segment => segment.type === 'expr');
-}
-
-function hasStructuredValues(segments, values) {
-  for (const segment of segments) {
-    if (segment.type !== 'value' && segment.type !== 'constant') continue;
-    const value = segment.type === 'constant' ? segment.value : values?.[segment.index];
-    if (isTemplateResult(value)) return true;
-    if (typeof Node !== 'undefined' && value instanceof Node) return true;
-    if (Array.isArray(value)) {
-      if (value.some(item => isTemplateResult(item) || (typeof Node !== 'undefined' && item instanceof Node))) {
-        return true;
-      }
-    }
-  }
+function isStructured(value) {
+  if (isTemplateResult(value) || isUnsafeHTML(value)) return true;
+  if (typeof Node !== 'undefined' && value instanceof Node) return true;
+  if (Array.isArray(value)) return value.some(item => isStructured(item));
   return false;
 }
 
 // ---------------------------------------------------------------------------
-// Parts
+// ChildPart
 // ---------------------------------------------------------------------------
 
 class ChildPart {
+  #anchor;
+  #anchorMode;
+  #segment;
+  #values;
+  #context;
+  #host;
+  #instance;
   #stop = null;
+  #textNode = null;
   #nodes = [];
-  #nested = [];
+  #nested = null;
 
-  constructor(anchor, segments, context, host, instance, values) {
-    this.anchor = anchor;
-    this.segments = segments;
-    this.context = context;
-    this.host = host;
-    this.instance = instance;
-    this.values = values || [];
+  constructor(anchor, descriptor, context, host, instance, values) {
+    this.#anchor = anchor;
+    this.#anchorMode = descriptor.anchor || 'node';
+    this.#segment = descriptor.segment;
+    this.#context = context;
+    this.#host = host;
+    this.#instance = instance;
+    this.#values = values || [];
 
-    if (hasExpressions(segments)) {
+    if (descriptor.segment.type === 'expr') {
       this.#stop = effect(() => this.commit(), {component: host, internal: true});
     } else {
       this.commit();
     }
   }
 
-  setResult(result) {
-    this.values = result?.values || [];
-    // `${}` values are not reactive by themselves; `update()` patches them.
+  setValues(values) {
+    this.#values = values || [];
     this.commit();
   }
 
+  #evaluate() {
+    const segment = this.#segment;
+    if (segment.type === 'expr') {
+      return ExpressionParser.evaluateAuto(segment.code, this.#context);
+    }
+    if (segment.type === 'constant') return segment.value;
+    return this.#values?.[segment.index];
+  }
+
   commit() {
-    if (hasStructuredValues(this.segments, this.values)) {
-      this.#renderStructured();
+    const value = this.#evaluate();
+    if (value === noChange) return;
+
+    if (this.#anchorMode === 'text') {
+      this.#anchor.nodeValue = value == null || value === nothing
+        ? ''
+        : segmentValueText(value, 'text') || String(value);
       return;
     }
 
-    this.#clearNodes();
-    const {text} = evalSegments(this.segments, this.context, this.values, 'text');
-    if (this.anchor.nodeValue !== text) {
-      recordTemplateStat('domWrites');
-      this.anchor.nodeValue = text;
+    if (value == null || value === nothing) {
+      this.#clear();
+      return;
+    }
+
+    if (isTemplateResult(value)) {
+      this.#renderTemplate(value);
+      return;
+    }
+
+    if (isUnsafeHTML(value)) {
+      this.#renderUnsafeHTML(value);
+      return;
+    }
+
+    if (isStructured(value)) {
+      this.#renderStructured(value);
+      return;
+    }
+
+    const text = this.#segment.type === 'expr'
+      ? String(value)
+      : segmentValueText(value, 'text');
+    this.#setText(text);
+  }
+
+  #setText(text) {
+    if (this.#nodes.length || this.#nested) this.#clearStructured();
+    if (!this.#textNode || this.#textNode.parentNode !== this.#anchor.parentNode) {
+      this.#textNode = document.createTextNode(text);
+      this.#anchor.parentNode?.insertBefore(this.#textNode, this.#anchor);
+    } else {
+      this.#textNode.nodeValue = text;
     }
   }
 
-  #clearNodes() {
-    for (const node of this.#nodes) node.remove?.();
-    this.#nodes = [];
-    for (const nested of this.#nested) nested.destroy();
-    this.#nested = [];
+  #renderTemplate(value) {
+    const compiled = compileTemplate(value);
+    if (this.#nested && this.#nested.compiled === compiled) {
+      this.#nested.setResult(value);
+      this.#nodes = this.#nested.rootNodes;
+      return;
+    }
+
+    this.#clear();
+    const nested = compiled.instantiate(this.#context, this.#host, {
+      values: value.values,
+    });
+    const nodes = nested.rootNodes;
+    this.#insertBefore(nodes);
+    this.#nested = nested;
+    this.#nodes = nodes;
+    this.#adoptChildren(nested.childrenRendered);
   }
 
-  #renderStructured() {
-    this.#clearNodes();
-    this.anchor.nodeValue = '';
+  #renderUnsafeHTML(value) {
+    this.#clear();
+    const template = document.createElement('template');
+    template.innerHTML = String(value.value ?? '');
+    const nodes = Array.from(template.content.childNodes);
+    this.#insertBefore(nodes);
+    this.#nodes = nodes;
+  }
 
+  #renderStructured(value) {
+    this.#clear();
     const nodes = [];
     const nested = [];
-    let textBuffer = '';
+    let text = '';
 
     const flushText = () => {
-      if (!textBuffer) return;
-      nodes.push(document.createTextNode(textBuffer));
-      textBuffer = '';
+      if (!text) return;
+      nodes.push(document.createTextNode(text));
+      text = '';
     };
 
-    const appendValue = (value) => {
-      if (value == null) return;
-
-      if (isTemplateResult(value)) {
+    const append = (item) => {
+      if (item == null || item === nothing || item === noChange) return;
+      if (isTemplateResult(item)) {
         flushText();
-        const compiled = compileTemplate(value);
-        const nestedInstance = compiled.instantiate(this.context, this.host, {
-          nested: true,
-          strategy: this.instance.strategy,
-          // Nested templates keep their own ${} values. Without `result` the
-          // nested Parts would start with an empty values array.
-          result: value,
+        const compiled = compileTemplate(item);
+        const child = compiled.instantiate(this.#context, this.#host, {
+          values: item.values,
         });
-        nodes.push(...nestedInstance.rootNodes);
-        nested.push(nestedInstance);
-        this.#adoptChildren(nestedInstance.childrenRendered);
+        nodes.push(...child.rootNodes);
+        nested.push(child);
+        this.#adoptChildren(child.childrenRendered);
         return;
       }
-
-      if (typeof Node !== 'undefined' && value instanceof Node) {
+      if (isUnsafeHTML(item)) {
         flushText();
-        nodes.push(value);
+        const template = document.createElement('template');
+        template.innerHTML = String(item.value ?? '');
+        nodes.push(...Array.from(template.content.childNodes));
         return;
       }
-
-      if (Array.isArray(value)) {
-        let first = true;
-        for (const item of value) {
-          if (first) first = false;
-          else if (!isTemplateResult(item) && !(typeof Node !== 'undefined' && item instanceof Node)) {
-            textBuffer += ' ';
-          } else {
-            flushText();
-          }
-          appendValue(item);
-        }
+      if (typeof Node !== 'undefined' && item instanceof Node) {
+        flushText();
+        const source = item.nodeType === Node.DOCUMENT_FRAGMENT_NODE
+          ? Array.from(item.childNodes)
+          : [item];
+        nodes.push(...source);
         return;
       }
-
-      textBuffer += String(value);
+      if (Array.isArray(item)) {
+        item.forEach((entry, index) => {
+          if (index > 0 && !isStructured(entry)) text += ' ';
+          append(entry);
+        });
+        return;
+      }
+      text += String(item);
     };
 
-    for (const segment of this.segments) {
-      if (segment.type === 'static') {
-        textBuffer += segment.value;
-        continue;
-      }
-      if (segment.type === 'expr') {
-        const value = ExpressionParser.evaluateAuto(segment.code, this.context);
-        textBuffer += value == null ? '' : String(value);
-        continue;
-      }
-      const value = segment.type === 'constant'
-        ? segment.value
-        : this.values?.[segment.index];
-      appendValue(value);
-    }
-
+    append(value);
     flushText();
 
-    const parent = this.anchor.parentNode;
-    if (!parent) return;
-    if (nodes.length) recordTemplateStat('domWrites', nodes.length);
-    for (const node of nodes) parent.insertBefore(node, this.anchor);
-
+    this.#insertBefore(nodes);
     this.#nodes = nodes;
     this.#nested = nested;
+  }
+
+  #insertBefore(nodes) {
+    const parent = this.#anchor.parentNode;
+    if (!parent) return;
+    if (nodes.length) recordTemplateStat('domWrites', nodes.length);
+    for (const node of nodes) parent.insertBefore(node, this.#anchor);
+  }
+
+  #clearStructured() {
+    if (this.#textNode) {
+      this.#textNode.remove();
+      this.#textNode = null;
+    }
+    for (const node of this.#nodes) node.remove?.();
+    this.#nodes = [];
+    for (const nested of this.#nestedList()) nested.destroy();
+    this.#nested = null;
+  }
+
+  #clear() {
+    this.#clearStructured();
+    this.#anchor.nodeValue = '';
   }
 
   #adoptChildren(children) {
     if (!children?.length) return;
     for (const child of children) {
-      if (!this.instance.childrenRendered.includes(child)) {
-        this.instance.childrenRendered.push(child);
+      if (!this.#instance.childrenRendered.includes(child)) {
+        this.#instance.childrenRendered.push(child);
       }
     }
   }
 
+  #nestedList() {
+    if (!this.#nested) return [];
+    return Array.isArray(this.#nested) ? this.#nested : [this.#nested];
+  }
+
+  refresh() {
+    for (const nested of this.#nestedList()) nested.refreshRefs?.();
+  }
+
   listenerCount() {
     let count = 0;
-    for (const nested of this.#nested) {
+    for (const nested of this.#nestedList()) {
       count += nested.getEventListenersCount?.() || 0;
     }
     return count;
@@ -310,9 +390,19 @@ class ChildPart {
   destroy() {
     this.#stop?.();
     this.#stop = null;
-    this.#clearNodes();
+    // Keep the rendered DOM in the detached subtree, matching the legacy
+    // lifecycle. Refs/listeners/effects are released, but textContent is not
+    // mutated just because a component was disconnected.
+    for (const nested of this.#nestedList()) nested.destroy();
+    this.#nested = null;
+    this.#nodes = [];
+    this.#textNode = null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// AttributePart / PropertyPart
+// ---------------------------------------------------------------------------
 
 class AttributePart {
   #stop = null;
@@ -325,6 +415,7 @@ class AttributePart {
     this.context = context;
     this.host = host;
     this.values = values || [];
+    this.boolean = BOOLEAN_ATTRIBUTES.has(this.name);
 
     if (descriptor.expression) {
       this.#stop = effect(() => this.commit(), {component: host, internal: true});
@@ -333,18 +424,32 @@ class AttributePart {
     }
   }
 
-  setResult(result) {
-    this.values = result?.values || [];
+  setValues(values) {
+    this.values = values || [];
     this.commit();
   }
 
   commit() {
-    const {text, hasNull} = evalSegments(this.segments, this.context, this.values, 'attribute');
+    const {text, hasNull, hasNothing, noChange: skip} = evalSegments(
+      this.segments, this.context, this.values, 'attribute'
+    );
+    if (skip) return;
 
     if (this.mode === 'component') {
-      if (this.element.getAttribute(this.name) !== text) {
+      if (hasNothing && text === '') this.element.removeAttribute(this.name);
+      else if (this.element.getAttribute(this.name) !== text) {
         recordTemplateStat('domWrites');
         this.element.setAttribute(this.name, text);
+      }
+      return;
+    }
+
+    if (hasNothing && text === '') {
+      this.element.removeAttribute(this.name);
+      if (this.boolean && this.name in this.element) {
+        this.element[this.name] = false;
+      } else if (this.name in this.element) {
+        this.element[this.name] = '';
       }
       return;
     }
@@ -355,21 +460,25 @@ class AttributePart {
   #setAttributeOrProperty(value, hasNull) {
     const node = this.element;
     const attrName = this.name;
-    const shouldUseProperty = attrName in node &&
+    const shouldUseProperty = !this.boolean &&
+      attrName in node &&
       !attrName.startsWith('data-') &&
       attrName !== 'style' &&
       attrName !== 'class';
 
+    if (this.boolean) {
+      const boolValue = !hasNull && value !== 'false' &&
+        (value === 'true' || value === '' || value === attrName);
+      if (node[attrName] !== boolValue) {
+        recordTemplateStat('domWrites');
+        node[attrName] = boolValue;
+        node.toggleAttribute(attrName, boolValue);
+      }
+      return;
+    }
+
     if (shouldUseProperty) {
-      if (typeof node[attrName] === 'boolean') {
-        const boolValue = !hasNull && value !== 'false' &&
-          (value === 'true' || value === '' || value === attrName);
-        if (node[attrName] !== boolValue) {
-          recordTemplateStat('domWrites');
-          node[attrName] = boolValue;
-          node.toggleAttribute(attrName, boolValue);
-        }
-      } else if (node[attrName] !== value) {
+      if (node[attrName] !== value) {
         recordTemplateStat('domWrites');
         node[attrName] = value;
       }
@@ -407,29 +516,30 @@ class PropertyPart {
     }
   }
 
-  setResult(result) {
-    this.values = result?.values || [];
+  setValues(values) {
+    this.values = values || [];
     this.commit();
   }
 
   commit() {
     const pure = this.segments.length === 1 && this.segments[0].type === 'expr';
-
-    // Compare through the raw target: reading a reactive property here would
-    // add a dependency and could make the part fight the component's own state.
     const rawTarget = toRaw(this.target) || this.target;
 
     if (pure) {
       const code = this.segments[0].code;
       const value = this.#evaluatePropertyValue(code);
+      if (value === noChange) return;
       if (rawTarget[this.name] !== value) {
         recordTemplateStat('domWrites');
-        this.target[this.name] = value;
+        this.target[this.name] = value === nothing ? '' : value;
       }
       return;
     }
 
-    const {text} = evalSegments(this.segments, this.context, this.values, 'property');
+    const {text, noChange: skip} = evalSegments(
+      this.segments, this.context, this.values, 'property'
+    );
+    if (skip) return;
     if (rawTarget[this.name] !== text) {
       recordTemplateStat('domWrites');
       this.target[this.name] = text;
@@ -452,44 +562,53 @@ class PropertyPart {
   }
 }
 
+// ---------------------------------------------------------------------------
+// EventPart
+// ---------------------------------------------------------------------------
+
 class EventPart {
   constructor(element, descriptor, context) {
     this.element = element;
     this.eventName = descriptor.eventName;
-    this.handler = null;
+    this.expr = descriptor.expr;
+    this.context = context;
+    this.methodName = descriptor.expr.match(METHOD_NAME_RE)?.[1] || null;
 
-    const expr = descriptor.expr;
-    const methodMatch = expr.match(METHOD_NAME_RE);
+    // Resolve on every dispatch. This keeps dynamic handlers current without
+    // requiring a remount, and matches Lit's "one listener, current value"
+    // model.
+    this.handler = (event) => {
+      let owned = null;
+      try {
+        owned = this.methodName
+          ? findMethod(this.context, this.methodName)
+          : resolveOwnedFromExpr(this.expr, this.context);
+      } catch (error) {
+        console.warn(`Invalid event handler '${this.expr}':`, error.message);
+      }
+      if (!owned) {
+        console.warn(`Handler '${this.expr}' did not resolve to a function`);
+        return;
+      }
+      owned.fn.call(owned.owner, event, this.element);
+    };
 
-    if (methodMatch) {
-      const methodName = methodMatch[1];
-      // Method-name handlers are resolved lazily, matching the legacy engine:
-      // the warning (if any) is emitted on click, not during rendering.
-      this.handler = (event) => {
-        const owned = findMethod(context, methodName);
-        if (!owned) {
-          console.warn(`Method '${methodName}' not found`);
-          return;
+    this.element.addEventListener(this.eventName, this.handler);
+
+    // Warn at render time for an expression that cannot resolve yet, but keep
+    // resolving on dispatch so a later valid handler starts working.
+    if (!this.methodName) {
+      try {
+        if (!resolveOwnedFromExpr(this.expr, this.context)) {
+          console.warn(`Handler '${this.expr}' did not resolve to a function`);
         }
-        owned.fn.call(owned.owner, event, this.element);
-      };
-      this.element.addEventListener(this.eventName, this.handler);
-      return;
-    }
-
-    let owned = null;
-    try {
-      owned = resolveOwnedFromExpr(expr, context);
-    } catch (error) {
-      console.warn(`Invalid event handler '${expr}':`, error.message);
-    }
-    if (owned) {
-      this.handler = (event) => owned.fn.call(owned.owner, event, this.element);
-      this.element.addEventListener(this.eventName, this.handler);
-    } else {
-      console.warn(`Handler '${expr}' did not resolve to a function`);
+      } catch (error) {
+        console.warn(`Invalid event handler '${this.expr}':`, error.message);
+      }
     }
   }
+
+  setValues() {}
 
   destroy() {
     if (this.handler) {
@@ -502,6 +621,10 @@ class EventPart {
     return this.handler ? 1 : 0;
   }
 }
+
+// ---------------------------------------------------------------------------
+// RefPart / BindPart
+// ---------------------------------------------------------------------------
 
 class RefPart {
   #targets = new Set();
@@ -548,6 +671,11 @@ class BindPart {
     this.context = context;
     this.host = host;
 
+    if (!ExpressionParser.isSafe(this.expr)) {
+      console.warn(`bind expects a simple path, got '{${this.expr}}'`);
+      return;
+    }
+
     const isCheckbox = element.type === 'checkbox';
     const isRadio = element.type === 'radio';
 
@@ -578,19 +706,21 @@ class BindPart {
     element.addEventListener(this.eventName, this.handler);
   }
 
+  setValues() {}
+
   destroy() {
     this.#stop?.();
     this.#stop = null;
-    this.element.removeEventListener(this.eventName, this.handler);
+    if (this.handler) this.element.removeEventListener(this.eventName, this.handler);
   }
 
   listenerCount() {
-    return 1;
+    return this.handler ? 1 : 0;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Declarative component creation
+// Component creation
 // ---------------------------------------------------------------------------
 
 function defineBuiltin(tag, is, factory, elementClass) {
@@ -660,15 +790,58 @@ function createComponentElement(descriptor, context, host, instance) {
   component._compiledTemplate = descriptor.childCompiled || null;
   component._vedaEvalContext = context;
   component._templateValues = instance.values;
-  instance.components.push({component, descriptor});
 
   if ((kind === 'property' || kind === 'rel') && !component.hasAttribute('about')) {
     const model = context?.model || host?.state?.model;
     if (model) component.state.model = model;
   }
 
+  instance.components.push({component, descriptor});
   if (component.rendered) instance.childrenRendered.push(component.rendered);
   return component;
+}
+
+// ---------------------------------------------------------------------------
+// Marker resolution
+// ---------------------------------------------------------------------------
+
+function collectMarkers(fragment) {
+  const elements = new Map();
+  for (const element of fragment.querySelectorAll(`[${ELEMENT_MARKER}]`)) {
+    const id = Number(element.getAttribute(ELEMENT_MARKER));
+    element.removeAttribute(ELEMENT_MARKER);
+    if (id) elements.set(id, element);
+  }
+
+  const children = new Map();
+  const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const match = TEXT_MARKER_RE.exec(node.nodeValue);
+    if (match) {
+      node.nodeValue = '';
+      children.set(Number(match[1]), node);
+    }
+    node = walker.nextNode();
+  }
+  return {elements, children};
+}
+
+function createElementPart(element, descriptor, context, host, values) {
+  switch (descriptor.type) {
+    case 'attribute':
+      return new AttributePart(element, descriptor, context, host, values);
+    case 'property':
+      return new PropertyPart(element, descriptor, context, host, values);
+    case 'event':
+      return new EventPart(element, descriptor, context, host);
+    case 'ref':
+      return new RefPart(element, descriptor.name, host);
+    case 'bind':
+      return new BindPart(element, descriptor, context, host);
+    default:
+      return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -682,7 +855,6 @@ export default class TemplateInstance {
     this.host = host;
     recordInstanceHost(host);
     this.options = options;
-    this.strategy = options.strategy || defaultBindingStrategy;
     this.result = options.result || null;
     this.values = options.values || this.result?.values || [];
 
@@ -692,36 +864,34 @@ export default class TemplateInstance {
     this.childrenRendered = [];
     this.rootNodes = [];
 
-    // Replace declarative component elements first. Paths remain valid because
-    // replacement happens in place.
-    for (const descriptor of compiled.components) {
-      const old = this.strategy.resolve(this.fragment, descriptor);
+    const markers = collectMarkers(this.fragment);
+
+    // Element groups first: components must exist before parts that target
+    // their attributes are created.
+    for (const group of compiled.elements) {
+      const old = markers.elements.get(group.id);
       if (!old || !old.parentNode) continue;
-      const component = createComponentElement(descriptor, context, host, this);
-      old.parentNode.replaceChild(component, old);
+      let element = old;
+
+      if (group.component) {
+        const component = createComponentElement(group.component, context, host, this);
+        old.parentNode.replaceChild(component, old);
+        element = component;
+      }
+
+      for (const descriptor of group.parts) {
+        const part = createElementPart(element, descriptor, context, host, this.values);
+        if (part) this.parts.push(part);
+      }
     }
 
-    // Resolve every node before creating any Part. ChildPart commits can
-    // insert/remove sibling nodes (${...} with a TemplateResult/Node/array),
-    // which would shift the child-index paths of Parts that are created later.
-    const elementBindings = [];
-    for (const descriptor of compiled.elementParts) {
-      const element = this.strategy.resolve(this.fragment, descriptor);
-      if (element) elementBindings.push([element, descriptor]);
-    }
-
-    const textBindings = [];
-    for (const descriptor of compiled.textParts) {
-      const node = this.strategy.resolve(this.fragment, descriptor);
-      if (node) textBindings.push([node, descriptor]);
-    }
-
-    for (const [element, descriptor] of elementBindings) {
-      this.parts.push(createElementPart(element, descriptor, context, host, this.values));
-    }
-
-    for (const [node, descriptor] of textBindings) {
-      this.parts.push(new ChildPart(node, descriptor.segments, context, host, this, this.values));
+    // Child markers are independent: a ChildPart inserts nodes before its own
+    // marker, so one structured value can never shift a sibling Part.
+    for (const descriptor of compiled.childParts) {
+      const anchor = markers.children.get(descriptor.id);
+      if (anchor) {
+        this.parts.push(new ChildPart(anchor, descriptor, context, host, this, this.values));
+      }
     }
 
     this.rootNodes = Array.from(this.fragment.childNodes);
@@ -736,19 +906,13 @@ export default class TemplateInstance {
   setResult(result) {
     recordTemplateStat('patches');
     this.result = result;
-    this.values = result?.values || [];
-    this.#applyValues();
+    this.setValues(result?.values || []);
   }
 
   setValues(values) {
     recordTemplateStat('patches');
     this.values = values || [];
-    this.#applyValues();
-  }
-
-  #applyValues() {
-    const source = {values: this.values};
-    for (const part of this.parts) part.setResult?.(source);
+    for (const part of this.parts) part.setValues?.(this.values);
     for (const {component} of this.components) {
       component._setTemplateValues?.(this.values);
     }
@@ -770,26 +934,7 @@ export default class TemplateInstance {
     for (const part of this.parts) part.destroy?.();
     this.parts = [];
     this.components = [];
-    // Keep the rendered DOM attached to a detached component, matching the
-    // legacy lifecycle. A replacement instance clears it via replaceChildren().
     this.rootNodes = [];
     this.fragment = null;
-  }
-}
-
-function createElementPart(element, descriptor, context, host, values) {
-  switch (descriptor.type) {
-    case 'attribute':
-      return new AttributePart(element, descriptor, context, host, values);
-    case 'property':
-      return new PropertyPart(element, descriptor, context, host, values);
-    case 'event':
-      return new EventPart(element, descriptor, context);
-    case 'ref':
-      return new RefPart(element, descriptor.name, host);
-    case 'bind':
-      return new BindPart(element, descriptor, context, host);
-    default:
-      return null;
   }
 }

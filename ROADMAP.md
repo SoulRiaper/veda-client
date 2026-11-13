@@ -318,7 +318,7 @@
 
 ### Core Optimizations
 - [x] **LIS reconciliation in Loop** - O(n log n) reordering
-- [x] **Virtual component** - renders only visible items (10K+ supported)
+- [x] **Virtual component** - renders only visible items (legacy path; not migrated to marker engine yet)
 - [ ] **Concurrent mode** (if needed)
 
 ### Developer Experience
@@ -336,7 +336,7 @@
 
 ## 🚧 Current Status
 
-**Current Branch:** `feature/reactive-system-mvp`
+**Current Branch:** `feat/template-result-parts` (v4.0.0 in progress: marker-based template engine)
 
 **Status:** Phase 1 COMPLETED ✅
 
@@ -345,7 +345,7 @@
 2. ✅ All critical bugs fixed (Phase 1.1)
 3. ✅ TypeScript types complete (Phase 1.2)
 4. ✅ Comprehensive documentation (Phase 1.3)
-5. ✅ 555 unit tests passing
+5. ✅ 745 unit tests passing
 6. ✅ Production-ready status achieved
 
 **Next Steps:**
@@ -374,7 +374,7 @@ To contribute:
 
 ---
 
-**Last updated:** November 2024
-**Version:** 2.0.0
-**Status:** Phase 1 Complete - Production Ready
+**Last updated:** November 2026
+**Version:** 4.0.0
+**Status:** Phase 1 Complete - v4.0.0 in progress (marker-based template engine, not released yet)
 

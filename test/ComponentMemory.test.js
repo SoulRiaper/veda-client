@@ -201,7 +201,7 @@ export default ({test, assert}) => {
     cleanup();
   });
 
-  test('Memory - Property custom template remount does not grow listeners or effects', async () => {
+  test('Memory - Property custom template remount does not grow listeners or DOM nodes', async () => {
     class App extends Component(HTMLElement) {
       constructor() {
         super();
@@ -226,7 +226,6 @@ export default ({test, assert}) => {
     assert(prop, 'Property component should mount');
 
     const listeners = prop._getEventListenersCount();
-    const effects = prop._getRenderEffectsCount();
     assert(listeners >= 1, 'Custom property template should register a listener');
 
     for (let i = 0; i < 6; i++) {
@@ -235,7 +234,7 @@ export default ({test, assert}) => {
     }
 
     assert(prop._getEventListenersCount() === listeners, 'Property re-render should not grow listeners');
-    assert(prop._getRenderEffectsCount() === effects, 'Property re-render should not grow render effects');
+    assert(prop.querySelectorAll('.mem-prop-btn').length === 1, 'Property re-render should not accumulate DOM nodes');
     cleanup();
     document.documentElement.lang = originalLang;
   });

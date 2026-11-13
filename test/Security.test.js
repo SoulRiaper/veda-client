@@ -84,14 +84,14 @@ export default ({ test, assert }) => {
     const dangerous = '&<>"\'/\\`';
     const result = html`<div>${dangerous}</div>`;
 
-    assert(result.includes('&amp;'), 'Should escape &');
-    assert(result.includes('&lt;'), 'Should escape <');
-    assert(result.includes('&gt;'), 'Should escape >');
-    assert(result.includes('&quot;'), 'Should escape "');
-    assert(result.includes('&#39;'), 'Should escape \'');
-    assert(result.includes('&#x2F;'), 'Should escape /');
-    assert(result.includes('&#x5C;'), 'Should escape \\');
-    assert(result.includes('&#x60;'), 'Should escape `');
+    assert(String(result).includes('&amp;'), 'Should escape &');
+    assert(String(result).includes('&lt;'), 'Should escape <');
+    assert(String(result).includes('&gt;'), 'Should escape >');
+    assert(String(result).includes('&quot;'), 'Should escape "');
+    assert(String(result).includes('&#39;'), 'Should escape \'');
+    assert(String(result).includes('&#x2F;'), 'Should escape /');
+    assert(String(result).includes('&#x5C;'), 'Should escape \\');
+    assert(String(result).includes('&#x60;'), 'Should escape `');
   });
 
   test('Security - html() escapes array items', async () => {
@@ -103,12 +103,12 @@ export default ({ test, assert }) => {
     const result = html`<ul>${items}</ul>`;
 
     // Before parsing, the result should have escaped values
-    assert(result.includes('&lt;'), 'Should escape < in result string');
-    assert(result.includes('&gt;'), 'Should escape > in result string');
+    assert(String(result).includes('&lt;'), 'Should escape < in result string');
+    assert(String(result).includes('&gt;'), 'Should escape > in result string');
 
     // Create a temp element to test actual rendering
     const temp = document.createElement('div');
-    temp.innerHTML = result.replace(/^__veda_html__/, '');
+    temp.innerHTML = String(result);
 
     // Should not have executable script or img elements
     assert(temp.querySelector('script') === null, 'Should not create script element');
@@ -459,7 +459,7 @@ export default ({ test, assert }) => {
     const result = html`<div>${largeArray}</div>`;
     const duration = Date.now() - start;
 
-    assert(!result.includes('<script>'), 'Should escape all items');
+    assert(!String(result).includes('<script>'), 'Should escape all items');
     assert(duration < 100, 'Should complete quickly (< 100ms)');
   });
 
@@ -705,7 +705,7 @@ export default ({ test, assert }) => {
     const result = html`<div>${malicious}</div>`;
 
     // Should not contain {expr} that could be parsed as expression
-    assert(!result.includes('{alert'), 'html tag should remove {expr} in interpolated values');
+    assert(!String(result).includes('{alert'), 'html tag should remove {expr} in interpolated values');
   });
 
   test('Security - expression results with {expr} patterns are safe', async () => {

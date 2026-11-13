@@ -1,15 +1,13 @@
 /**
  * TemplateResult: a Lit-like template value.
  *
- * `html` returns a TemplateResult instead of a plain string. For backward
- * compatibility the object extends String, so existing code that does
- * `innerHTML = html`...``, `String(result)`, `result.includes(...)` or string
- * concatenation keeps working. The renderer detects TemplateResult and uses
- * `strings` / `values` to compile and patch a cached template. `raw` keeps its
- * historical contract and returns a plain string.
+ * `html` returns a TemplateResult object. It is intentionally not a String
+ * subclass any more: rendering goes through the template engine, not through
+ * `innerHTML`. `toString()` is kept for diagnostics and migration, but the
+ * supported way to render a result is `render()` or a Component.
  *
  * `{expr}` inside the static parts remains the Veda reactive expression
- * syntax. `${value}` interpolations become lazy template values.
+ * syntax. `${value}` interpolations become template values.
  */
 
 const HTML_ESCAPE_MAP = {
@@ -18,6 +16,29 @@ const HTML_ESCAPE_MAP = {
 };
 const HTML_ESCAPE_REGEX = /[&<>"'/\\`]/g;
 const SAFE_EXPR_REGEX = /\{[^}]*\}/g;
+
+/**
+ * Sentinel: render nothing at this position.
+ */
+export const nothing = Symbol.for('veda.nothing');
+/**
+ * Sentinel: keep the previous value of this Part.
+ */
+export const noChange = Symbol.for('veda.noChange');
+
+const UNSAFE_HTML = Symbol.for('veda.unsafeHTML');
+
+/**
+ * Trusted markup. Use only with trusted content; values are inserted as DOM.
+ * @param {unknown} value
+ */
+export function unsafeHTML(value) {
+  return {[UNSAFE_HTML]: true, value};
+}
+
+export function isUnsafeHTML(value) {
+  return Boolean(value && value[UNSAFE_HTML] === true);
+}
 
 export function safe(value) {
   if (Array.isArray(value)) return value.map(safe);
@@ -28,7 +49,7 @@ export function safe(value) {
 }
 
 function legacyValue(value, type) {
-  if (value == null) return '';
+  if (value == null || value === nothing || value === noChange) return '';
   if (Array.isArray(value)) {
     return value.map(item => legacyValue(item, type)).join(' ');
   }
@@ -36,6 +57,7 @@ function legacyValue(value, type) {
     // Nested templates are already escaped/serialized by their own tag.
     return value.toString();
   }
+  if (isUnsafeHTML(value)) return String(value.value ?? '');
   if (type === 'raw') {
     return String(value);
   }
@@ -45,21 +67,27 @@ function legacyValue(value, type) {
   return String(value);
 }
 
-export class TemplateResult extends String {
+export class TemplateResult {
   /**
-   * @param {TemplateStringsArray|string[]} strings
+   * @param {TemplateStringsArray|readonly string[]|string} strings
    * @param {any[]} values
    * @param {'html'|'raw'} [type]
    */
   constructor(strings, values, type = 'html') {
-    const legacy = legacyStrings(strings, values, type);
-    super(legacy);
     this.strings = strings;
     this.values = values;
     this.type = type;
   }
 
   get isTemplateResult() { return true; }
+
+  /**
+   * Diagnostic/migration serialization. Do not use this to render: it loses
+   * reactivity and bypasses the template engine.
+   */
+  toString() {
+    return legacyStrings(this.strings, this.values, this.type);
+  }
 }
 
 export function isTemplateResult(value) {
@@ -67,7 +95,11 @@ export function isTemplateResult(value) {
 }
 
 function legacyStrings(strings, values, type) {
-  if (typeof strings === 'string') return strings;
+  if (typeof strings === 'string') {
+    let result = strings;
+    for (let i = 0; i < values.length; i++) result += legacyValue(values[i], type);
+    return result.trimEnd();
+  }
   let result = '';
   const count = Math.max(strings.length, values.length + 1);
   for (let i = 0; i < count; i++) {
@@ -78,15 +110,11 @@ function legacyStrings(strings, values, type) {
 }
 
 export function html(strings, ...values) {
-  if (typeof strings === 'string' && values.length === 0) {
-    return new TemplateResult([strings], [], 'html');
-  }
   return new TemplateResult(strings, values, 'html');
 }
 
 export function raw(strings, ...values) {
-  // `raw` keeps the historical contract: it returns a plain string. Only
-  // `html` participates in the TemplateResult pipeline.
+  // `raw` keeps its historical string contract. It is not a TemplateResult.
   if (typeof strings === 'string' && values.length === 0) return strings;
   return legacyStrings(strings, values, 'raw');
 }

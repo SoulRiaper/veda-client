@@ -102,9 +102,7 @@ export default function ValueComponent (Class = HTMLElement) {
     renderValue (value, container) {
       // Sanitize to prevent XSS via {expr} patterns in data
       const sanitized = value.toString().replace(/!\{/g, '!\u200B{');
-      const node = document.createTextNode(sanitized);
-      node.__vedaProcessed = true; // Mark as processed to skip re-parsing
-      container.appendChild(node);
+      container.appendChild(document.createTextNode(sanitized));
       return null;
     }
 
