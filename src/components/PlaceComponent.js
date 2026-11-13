@@ -83,6 +83,19 @@ export default function PlaceComponent(Class = HTMLElement) {
       this.#target = null;
     }
 
+    // A parent update() rebuilds the author's refs. Place forwards refs to the
+    // authoring component, so re-register them after the parent reset them.
+    _onTemplateValuesChanged() {
+      if (!this.isConnected) return;
+      const evalContext = this._vedaEvalContext || this._vedaParentContext;
+      this._vedaRefsTarget = this.#refsOwner(evalContext, this._vedaParentContext);
+      try {
+        this._refreshRefs();
+      } finally {
+        this._vedaRefsTarget = null;
+      }
+    }
+
     #refsOwner(evalContext, fallback) {
       let obj = evalContext;
       for (let i = 0; obj && i < MAX_TREE_DEPTH; i++) {

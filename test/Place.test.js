@@ -103,5 +103,31 @@ export default ({test, assert}) => {
 
     cleanup();
   });
+  test('Place - parent update keeps author refs pointing at moved nodes', async () => {
+    class PlaceRefsApp extends Component(HTMLElement) {
+      render() {
+        return html`
+          <${Place} to="body">
+            <button class="placed-ref" ref="placedBtn">Close</button>
+          </${Place}>
+        `;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(PlaceRefsApp);
+    const place = component.querySelector('veda-place');
+    await place.rendered;
+    await flushEffects();
+
+    const button = document.body.querySelector('.placed-ref');
+    assert(component.refs.placedBtn === button, 'Place should forward the author ref');
+
+    await component.update();
+    await flushEffects();
+
+    assert(component.refs.placedBtn === button, 'Parent update must restore refs forwarded by Place');
+
+    cleanup();
+  });
 
 };

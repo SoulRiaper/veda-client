@@ -1,11 +1,12 @@
 /**
  * TemplateResult: a Lit-like template value.
  *
- * `html` and `raw` return a TemplateResult instead of a plain string. For
- * backward compatibility the object extends String, so existing code that does
+ * `html` returns a TemplateResult instead of a plain string. For backward
+ * compatibility the object extends String, so existing code that does
  * `innerHTML = html`...``, `String(result)`, `result.includes(...)` or string
  * concatenation keeps working. The renderer detects TemplateResult and uses
- * `strings` / `values` to compile and patch a cached template.
+ * `strings` / `values` to compile and patch a cached template. `raw` keeps its
+ * historical contract and returns a plain string.
  *
  * `{expr}` inside the static parts remains the Veda reactive expression
  * syntax. `${value}` interpolations become lazy template values.

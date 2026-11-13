@@ -132,6 +132,10 @@ export default function IfComponent(Class = HTMLElement) {
       this.#contentInstance?.setValues(values);
     }
 
+    _getEventListenersCount() {
+      return super._getEventListenersCount() + (this.#contentInstance?.getEventListenersCount?.() || 0);
+    }
+
     render() {
       return '';
     }

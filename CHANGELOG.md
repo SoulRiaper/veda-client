@@ -14,9 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In-place `update()` patching when the rendered template is unchanged.
 - `ExpressionParser.compile()` cache for compiled safe/complex expressions.
 - `Loop`, `If`, `Slot`, `Place`, `Property`, `Relation` and `Value` now use compiled templates and Part instances instead of re-parsing and re-walking their content.
-- `${}` values are passed through to child component templates and nested components.
+- `${}` values are passed through to child component templates and nested components (including values of a nested `TemplateResult`). `${}` inside Slot-projected content is still baked into the host template; see `TEMPLATE_ENGINE.md`.
 - `BindingStrategy` seam with `PathBindingStrategy` for swapping node-location strategies.
-- New documentation: `TEMPLATE_ENGINE.md` and `TEMPLATE_ENGINE_SCOPE.md`.
+- New documentation: `TEMPLATE_ENGINE.md`.
 
 ### Changed
 - `update()` reuses DOM nodes and child components when the template is unchanged (previously the whole subtree was replaced).
@@ -25,12 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Place` patches moved nodes in place instead of remounting on every `update()`.
 - `Slot` reuses its template instance when the projection and context are unchanged.
 - `Value`/`Property`/`Relation` only replace changed value ranges and reuse unchanged nodes/template instances.
+- `raw` passed as a `${}` value is now inserted as text (DOM-escaped), not as markup; return `raw` from `render()` for trusted markup.
 
 ### Fixed
 - Loop item handlers bound to plain item objects no longer bypass reactivity.
 - DOM nodes are no longer wrapped by reactive proxies; this fixes `Node.contains()` brand-check errors when `refs` live on reactive state (Slot/Place remounts).
 - Slot/Place ref cleanup now unwraps reactive owners and nodes before calling native DOM methods.
 - Property lang changes invalidate the value cache so all values re-render with the new language.
+- Parts are resolved before any `ChildPart` commits, so a structured `${}` value cannot shift sibling part paths.
+- `Place` re-registers author `refs` after a parent `update()`.
+- Unquoted attribute values stay dynamic Parts; `${}` in comments, `<script>` and `<style>` is escaped instead of being inserted verbatim.
+- `clearTemplateCache()` now clears per-call-site templates too; template caches are LRU.
 
 ## [3.0.0] - 2025-11
 

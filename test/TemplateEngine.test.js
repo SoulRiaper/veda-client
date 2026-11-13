@@ -4,7 +4,7 @@ import {Loop} from '../src/components/LoopComponent.js';
 import {If} from '../src/components/IfComponent.js';
 import {flushEffects} from '../src/Effect.js';
 import {createTestComponent, createTestContainer} from './helpers.js';
-import {clearTemplateCache, getTemplateCacheStats} from '../src/template/Template.js';
+import {clearTemplateCache, compileTemplate, getTemplateCacheStats} from '../src/template/Template.js';
 import {TemplateResult} from '../src/template/TemplateResult.js';
 import {PathBindingStrategy} from '../src/template/BindingStrategy.js';
 
@@ -367,6 +367,150 @@ export default ({test, assert}) => {
     const {component, cleanup} = await createTestComponent(StrategyComponent);
     assert(resolves > 0, 'Custom binding strategy should be used');
     assert(component.querySelector('span').textContent === 'ok', 'Custom strategy should still bind parts');
+
+    cleanup();
+  });
+
+  test('TemplateEngine - structured values keep later sibling parts on their own nodes', async () => {
+    class StructuredSiblings extends Component(HTMLElement) {
+      render() {
+        const first = html`<b class="first">1</b>`;
+        const second = html`<i class="second">2</i>`;
+        return html`<div class="structured">${first}<span class="middle">mid</span>${second}</div>`;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(StructuredSiblings);
+    const div = component.querySelector('.structured');
+    const tags = [...div.children].map(child => child.tagName);
+
+    assert.deepEqual(tags, ['B', 'SPAN', 'I'], 'Structured ${} parts must not shift later sibling paths');
+    assert(div.querySelector('.middle').textContent === 'mid', 'Static sibling should keep its content');
+
+    cleanup();
+  });
+
+  test('TemplateEngine - nested TemplateResult keeps its own ${} values', async () => {
+    class NestedLazy extends Component(HTMLElement) {
+      constructor() {
+        super();
+        this.state.name = 'first';
+      }
+      render() {
+        return html`<div class="nested-lazy">${html`<em>${this.state.name}</em>`}</div>`;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(NestedLazy);
+    assert(component.querySelector('em').textContent === 'first', 'Nested ${} should render its value');
+
+    component.state.name = 'second';
+    await component.update();
+    await flushEffects();
+
+    assert(component.querySelector('em').textContent === 'second', 'Nested ${} should follow update() values');
+
+    cleanup();
+  });
+
+  test('TemplateEngine - unquoted attribute values stay dynamic and escaped', async () => {
+    class UnquotedAttribute extends Component(HTMLElement) {
+      constructor() {
+        super();
+        this.state.value = 'safe';
+      }
+      render() {
+        return html`<div class="unquoted" data-value=${this.state.value}></div>`;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(UnquotedAttribute);
+    const div = component.querySelector('.unquoted');
+    assert(div.getAttribute('data-value') === 'safe', 'Unquoted ${} should be attached as an attribute');
+
+    const payload = 'a><img class="pwn" src=x>';
+    component.state.value = payload;
+    await component.update();
+    await flushEffects();
+
+    assert(div.getAttribute('data-value') === payload, 'Attribute value should be preserved verbatim');
+    assert(component.querySelector('.pwn') === null, 'Attribute value must not inject markup');
+
+    cleanup();
+  });
+
+  test('TemplateEngine - a literal < in text does not fold the following ${}', async () => {
+    class LessThanText extends Component(HTMLElement) {
+      constructor() {
+        super();
+        this.state.value = 'one';
+      }
+      render() {
+        return html`<p class="less-than">1 < 2 ${this.state.value}</p>`;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(LessThanText);
+    const p = component.querySelector('.less-than');
+    assert(p.textContent === '1 < 2 one', 'Text with < should render');
+
+    const payload = '<img class="pwn" src=x>';
+    component.state.value = payload;
+    await component.update();
+    await flushEffects();
+
+    assert(p.textContent === `1 < 2 ${payload}`, 'Value after < should stay dynamic text');
+    assert(component.querySelector('.pwn') === null, 'Text value must not inject markup');
+
+    cleanup();
+  });
+
+  test('TemplateEngine - ${} inside a comment is escaped, not injected as markup', () => {
+    const compiled = compileTemplate(html`<!-- ${'--> <img class="pwn">'} -->`);
+    const source = compiled.template.innerHTML;
+
+    assert(!source.includes('<img'), 'Comment value must not create an element');
+    assert(source.includes('&lt;img'), 'Comment value should be escaped');
+  });
+
+  test('TemplateEngine - ${} inside script/style raw text is escaped', () => {
+    const compiled = compileTemplate(html`<script>const t = ${'</script><img class="pwn">'};</script>`);
+    const source = compiled.template.innerHTML;
+
+    assert(!source.includes('<img'), 'Raw text value must not create an element');
+    assert(source.includes('&lt;img'), 'Raw text value should be escaped');
+  });
+
+  test('TemplateEngine - clearTemplateCache clears call-site templates too', () => {
+    clearTemplateCache();
+    const make = () => html`<div class="cache-clear">${1}</div>`;
+
+    const first = compileTemplate(make());
+    clearTemplateCache();
+    const second = compileTemplate(make());
+
+    assert(first !== second, 'clearTemplateCache should drop the per-call-site cache');
+  });
+
+  test('TemplateEngine - changed folded values use a new compiled template', async () => {
+    class DynamicTagSwitch extends Component(HTMLElement) {
+      constructor() {
+        super();
+        this.state.tag = 'section';
+      }
+      render() {
+        return html`<${this.state.tag} class="dynamic-tag">text</${this.state.tag}>`;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(DynamicTagSwitch);
+    assert(component.querySelector('section.dynamic-tag') !== null, 'Dynamic tag should render');
+
+    component.state.tag = 'article';
+    await component.update();
+
+    assert(component.querySelector('section.dynamic-tag') === null, 'Old folded template should be removed');
+    assert(component.querySelector('article.dynamic-tag') !== null, 'New folded value should compile a new template');
 
     cleanup();
   });

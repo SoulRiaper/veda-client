@@ -135,6 +135,9 @@ The framework exports the following modules from `./src/index.js`:
 |  | `reactive` | Create reactive objects for state management | Component.js |
 |  | `effect` | Create auto-tracking effect | Component.js |
 |  | `computed` | Create computed value | Reactive.js |
+| **Template** | `TemplateResult` | String-compatible value returned by `html` | TemplateResult.js |
+|  | `PathBindingStrategy`, `defaultBindingStrategy` | Node lookup strategy for Parts | BindingStrategy.js |
+|  | `getTemplateCacheStats`, `resetTemplateStats`, `clearTemplateCache` | Template cache diagnostics | Template.js |
 | **Components** | `Loop` | List rendering with reconciliation | LoopComponent.js |
 |  | `If` | Conditional rendering | IfComponent.js |
 | **Data** | `Model` | RDF/semantic data model | Model.js |

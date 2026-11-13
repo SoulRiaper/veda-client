@@ -1,5 +1,6 @@
 import Model from '../Model.js';
 import type {TemplateResult} from '../template/TemplateResult.js';
+import type {CompiledTemplate} from '../template/Template.js';
 import type {BindingStrategy} from '../template/BindingStrategy.js';
 
 export function html(strings: TemplateStringsArray, ...values: any[]): TemplateResult;
@@ -14,7 +15,7 @@ export interface ComponentState<M extends Model = Model> {
 export interface ComponentInstance<M extends Model = Model> {
   state: ComponentState<M>; // Reactive state object with typed model
   model?: M; // Direct model access (alternative to state.model)
-  template?: string;
+  template?: string | TemplateResult | CompiledTemplate;
   rendered: Promise<void>;
   refs: Record<string, Element | undefined>;
   context: Record<string, any>;
@@ -25,7 +26,8 @@ export interface ComponentInstance<M extends Model = Model> {
 
   added(): void | Promise<void>;
   pre(): void | Promise<void>;
-  render(): string | TemplateResult | Promise<string | TemplateResult> | undefined;
+  render(): string | TemplateResult | CompiledTemplate |
+    Promise<string | TemplateResult | CompiledTemplate> | undefined;
   post(fragment?: DocumentFragment): void | Promise<void>;
   removed(): void | Promise<void>;
 

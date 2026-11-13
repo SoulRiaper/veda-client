@@ -395,6 +395,14 @@ export default function LoopComponent(Class = HTMLElement) {
       }
     }
 
+    _getEventListenersCount() {
+      let count = super._getEventListenersCount();
+      for (const [, itemData] of this.#itemsMap) {
+        count += itemData.instance?.getEventListenersCount?.() || 0;
+      }
+      return count;
+    }
+
     render() {
       return '';
     }

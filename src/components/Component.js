@@ -281,8 +281,10 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
       return null;
     }
 
-    // Place moves its rendered children out of the component; patching in place
-    // would leave nothing to move. It must remount on every update.
+    // Allows a component to force a fresh template instance on every update().
+    // The default is to patch in place when the compiled template is unchanged.
+    // Place/Slot move rendered nodes elsewhere but keep their Parts, so they
+    // rely on in-place patching and do not override this.
     _reuseTemplateInstance() {
       return true;
     }
@@ -317,6 +319,13 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
     }
 
     _onTemplateValuesChanged() {}
+
+    // Re-register refs owned by this component's template instance. Nested
+    // components that forward refs to an ancestor (Place/Slot) call this after
+    // the ancestor rebuilt its refs on update().
+    _refreshRefs() {
+      this.#instance?.refreshRefs();
+    }
 
     // ---------- Render Pipeline ----------
     async update () {

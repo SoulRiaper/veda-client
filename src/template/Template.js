@@ -14,7 +14,11 @@ const MAX_STRING_CACHE = 1000;
 const MAX_SHAPE_CACHE = 20;
 
 const stringCache = new Map();
-const resultCache = new WeakMap();
+let resultCache = new WeakMap();
+// Per call-site source + token classification. Fold modes depend only on the
+// template source (and type), not on the interpolated values, so the full HTML
+// scan can be skipped on cache hits.
+let sourceCache = new WeakMap();
 
 function token(index) {
   return `${TOKEN_PREFIX}${index}${TOKEN_SUFFIX}`;
@@ -54,6 +58,14 @@ function escapeAttribute(value) {
   return String(value).replace(ATTR_ESCAPE_REGEX, char => ATTR_ESCAPE_MAP[char]);
 }
 
+// Dynamic values folded into comments or <script>/<style> raw text cannot be
+// represented as DOM Parts, so they are escaped instead of inserted verbatim.
+// This matches the old html`` behaviour and prevents `-->` / `</script>`
+// breakout from a value.
+function escapeRawText(value, type) {
+  return escapeAttribute(stringifyTagValue(value, type));
+}
+
 /**
  * Replace `${}` interpolations with internal tokens.
  */
@@ -89,6 +101,7 @@ function foldStaticTokens(source, tokenMap, options = {}) {
   let quote = null;
   let attrName = '';
   let readingAttrName = false;
+  let expectingValue = false;
   let inComment = false;
   let rawTextTag = null;
   let pendingRawTextTag = null;
@@ -104,7 +117,7 @@ function foldStaticTokens(source, tokenMap, options = {}) {
       const tokenInfo = isTokenAt(source, i) ? readTokenAt(source, i) : null;
       if (tokenInfo) {
         const value = tokenMap.get(tokenInfo.index);
-        out += stringifyTagValue(value, type);
+        out += escapeRawText(value, type);
         modes.set(tokenInfo.index, 'folded');
         i = tokenInfo.end;
         continue;
@@ -121,7 +134,7 @@ function foldStaticTokens(source, tokenMap, options = {}) {
         const tokenInfo = isTokenAt(source, i) ? readTokenAt(source, i) : null;
         if (tokenInfo) {
           const value = tokenMap.get(tokenInfo.index);
-          out += stringifyTagValue(value, type);
+          out += escapeRawText(value, type);
           modes.set(tokenInfo.index, 'folded');
           i = tokenInfo.end;
           continue;
@@ -169,6 +182,7 @@ function foldStaticTokens(source, tokenMap, options = {}) {
         inTag = false;
         attrName = '';
         readingAttrName = false;
+        expectingValue = false;
         if (pendingRawTextTag) {
           rawTextTag = pendingRawTextTag;
           pendingRawTextTag = null;
@@ -179,6 +193,7 @@ function foldStaticTokens(source, tokenMap, options = {}) {
       }
       if (char === '"' || char === "'") {
         quote = char;
+        expectingValue = false;
         out += char;
         i++;
         continue;
@@ -187,6 +202,7 @@ function foldStaticTokens(source, tokenMap, options = {}) {
         inTag = false;
         attrName = '';
         readingAttrName = false;
+        expectingValue = false;
         pendingRawTextTag = null;
         out += '/>';
         i += 2;
@@ -194,6 +210,7 @@ function foldStaticTokens(source, tokenMap, options = {}) {
       }
       if (/\s/.test(char)) {
         readingAttrName = false;
+        expectingValue = false;
         attrName = '';
         out += char;
         i++;
@@ -201,16 +218,23 @@ function foldStaticTokens(source, tokenMap, options = {}) {
       }
       const tokenInfo = isTokenAt(source, i) ? readTokenAt(source, i) : null;
       if (tokenInfo) {
-        const value = tokenMap.get(tokenInfo.index);
-        // Tag name, attribute name, or an unquoted attribute value. Values
-        // such as ` type="text"` are intentionally inserted as markup.
-        out += stringifyTagValue(value, type);
-        modes.set(tokenInfo.index, 'folded');
+        // A token after `=` is an unquoted attribute value: keep it dynamic so
+        // it goes through AttributePart and is escaped by the DOM. Tokens in
+        // tag names, attribute names and attribute snippets stay static markup
+        // (that is the documented "trusted markup" position).
+        if (expectingValue && !forceFold) {
+          out += tokenInfo.text;
+          modes.set(tokenInfo.index, 'dynamic');
+        } else {
+          out += stringifyTagValue(tokenMap.get(tokenInfo.index), type);
+          modes.set(tokenInfo.index, 'folded');
+        }
         i = tokenInfo.end;
         continue;
       }
       if (char === '=') {
         readingAttrName = false;
+        expectingValue = true;
         out += char;
         i++;
         continue;
@@ -227,10 +251,20 @@ function foldStaticTokens(source, tokenMap, options = {}) {
     }
 
     if (source[i] === '<') {
+      const next = source[i + 1];
+      // A lone `<` in text (e.g. "1 < 2") is not a tag start. Without this
+      // check the scanner would treat following `${}` as static markup.
+      const startsTag = next &&
+        (/[A-Za-z]/.test(next) || next === '/' || next === '!' || next === '?' || isTokenAt(source, i + 1));
+      if (!startsTag) {
+        out += source[i++];
+        continue;
+      }
       const rest = source.slice(i);
       const rawMatch = rest.match(/^<(script|style)(?=[\s>])/i);
       inTag = true;
       readingAttrName = true;
+      expectingValue = false;
       attrName = '';
       if (rawMatch) pendingRawTextTag = rawMatch[1].toLowerCase();
       out += '<';
@@ -627,33 +661,63 @@ export function compileTemplate(input) {
 
   if (isTemplateResult(input)) {
     const strings = input.strings;
-    const {source, tokenMap} = buildTokenizedSource(strings, input.values);
-    const {foldedSource, modes} = foldStaticTokens(source, tokenMap, {
-      type: input.type,
-      forceFold: input.type === 'raw',
-    });
-    const shape = shapeKey(input.values, input.type, modes);
+    const type = input.type;
+    const forceFold = type === 'raw';
+    const canCache = strings && (typeof strings === 'object' || typeof strings === 'function');
 
-    let perStrings = resultCache.get(strings);
-    if (!perStrings) {
-      perStrings = new Map();
-      resultCache.set(strings, perStrings);
+    let stringsEntry = canCache ? sourceCache.get(strings) : null;
+    if (stringsEntry && stringsEntry.type !== type) stringsEntry = null;
+
+    let source = stringsEntry?.source;
+    let modes = stringsEntry?.modes;
+    let foldedSource = null;
+    let tokenMap = null;
+
+    if (!stringsEntry) {
+      const built = buildTokenizedSource(strings, input.values);
+      source = built.source;
+      tokenMap = built.tokenMap;
+      const folded = foldStaticTokens(source, tokenMap, {type, forceFold});
+      modes = folded.modes;
+      foldedSource = folded.foldedSource;
+      if (canCache) sourceCache.set(strings, {type, source, modes});
     }
-    const cached = perStrings.get(shape);
+
+    const shape = shapeKey(input.values, type, modes);
+
+    let perStrings = null;
+    if (canCache) {
+      perStrings = resultCache.get(strings);
+      if (!perStrings) {
+        perStrings = new Map();
+        resultCache.set(strings, perStrings);
+      }
+    }
+    const cached = perStrings?.get(shape);
     if (cached) {
+      // Keep the shape map LRU: re-insert on a hit so trimCache drops the
+      // least recently used shape instead of the oldest compiled one.
+      perStrings.delete(shape);
+      perStrings.set(shape, cached);
       recordTemplateStat('cacheHits');
       return cached;
     }
 
     recordTemplateStat('compiles');
+    if (!foldedSource) {
+      tokenMap = new Map(input.values.map((value, index) => [index, value]));
+      foldedSource = foldStaticTokens(source, tokenMap, {type, forceFold}).foldedSource;
+    }
     const compiled = compileSource(source, tokenMap, {
-      type: input.type,
-      forceFold: input.type === 'raw',
+      type,
+      forceFold,
       foldedSource,
       modes,
     });
-    perStrings.set(shape, compiled);
-    trimCache(perStrings, MAX_SHAPE_CACHE);
+    if (perStrings) {
+      perStrings.set(shape, compiled);
+      trimCache(perStrings, MAX_SHAPE_CACHE);
+    }
     return compiled;
   }
 
@@ -665,6 +729,8 @@ export function compileTemplate(input) {
 
   const cached = stringCache.get(stringSource);
   if (cached) {
+    stringCache.delete(stringSource);
+    stringCache.set(stringSource, cached);
     recordTemplateStat('cacheHits');
     return cached;
   }
@@ -678,6 +744,8 @@ export function compileTemplate(input) {
 
 export function clearTemplateCache() {
   stringCache.clear();
+  resultCache = new WeakMap();
+  sourceCache = new WeakMap();
   resetTemplateStats();
 }
 

@@ -5,6 +5,11 @@
  * patch a cached template.
  */
 export class TemplateResult extends String {
+  constructor(
+    strings: TemplateStringsArray | readonly string[],
+    values: readonly any[],
+    type?: 'html' | 'raw',
+  );
   readonly strings: readonly string[] | TemplateStringsArray;
   readonly values: readonly any[];
   readonly type: 'html' | 'raw';

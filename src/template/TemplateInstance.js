@@ -230,6 +230,9 @@ class ChildPart {
         const nestedInstance = compiled.instantiate(this.context, this.host, {
           nested: true,
           strategy: this.instance.strategy,
+          // Nested templates keep their own ${} values. Without `result` the
+          // nested Parts would start with an empty values array.
+          result: value,
         });
         nodes.push(...nestedInstance.rootNodes);
         nested.push(nestedInstance);
@@ -294,6 +297,14 @@ class ChildPart {
         this.instance.childrenRendered.push(child);
       }
     }
+  }
+
+  listenerCount() {
+    let count = 0;
+    for (const nested of this.#nested) {
+      count += nested.getEventListenersCount?.() || 0;
+    }
+    return count;
   }
 
   destroy() {
@@ -690,15 +701,26 @@ export default class TemplateInstance {
       old.parentNode.replaceChild(component, old);
     }
 
+    // Resolve every node before creating any Part. ChildPart commits can
+    // insert/remove sibling nodes (${...} with a TemplateResult/Node/array),
+    // which would shift the child-index paths of Parts that are created later.
+    const elementBindings = [];
     for (const descriptor of compiled.elementParts) {
       const element = this.strategy.resolve(this.fragment, descriptor);
-      if (!element) continue;
+      if (element) elementBindings.push([element, descriptor]);
+    }
+
+    const textBindings = [];
+    for (const descriptor of compiled.textParts) {
+      const node = this.strategy.resolve(this.fragment, descriptor);
+      if (node) textBindings.push([node, descriptor]);
+    }
+
+    for (const [element, descriptor] of elementBindings) {
       this.parts.push(createElementPart(element, descriptor, context, host, this.values));
     }
 
-    for (const descriptor of compiled.textParts) {
-      const node = this.strategy.resolve(this.fragment, descriptor);
-      if (!node) continue;
+    for (const [node, descriptor] of textBindings) {
       this.parts.push(new ChildPart(node, descriptor.segments, context, host, this, this.values));
     }
 
@@ -740,9 +762,6 @@ export default class TemplateInstance {
     let count = 0;
     for (const part of this.parts) {
       if (typeof part.listenerCount === 'function') count += part.listenerCount();
-    }
-    for (const nested of this.nestedInstances || []) {
-      count += nested.getEventListenersCount?.() || 0;
     }
     return count;
   }
