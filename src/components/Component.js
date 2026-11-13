@@ -8,6 +8,9 @@ import ExpressionParser from './ExpressionParser.js';
 import {effect, untrack} from '../Effect.js';
 import {reactive, toRaw} from '../Reactive.js';
 import {createContextProxy} from './contextLookup.js';
+import {compileTemplate, CompiledTemplate} from '../template/Template.js';
+import {html, raw, safe} from '../template/TemplateResult.js';
+import {factories} from '../template/factories.js';
 
 // ============================================================================
 // CONSTANTS
@@ -16,12 +19,6 @@ import {createContextProxy} from './contextLookup.js';
 const MAX_TREE_DEPTH = 20;
 const METHOD_NAME_RE = /^(?:this\.)?([A-Za-z_$][\w$]*)$/;
 const EXPR_REGEX = /\{([^}]+)\}/g;
-const HTML_ESCAPE_MAP = {
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
-  "'": '&#39;', '/': '&#x2F;', '\\': '&#x5C;', '`': '&#x60;',
-};
-const HTML_ESCAPE_REGEX = /[&<>"'/\\`]/g;
-const SAFE_EXPR_REGEX = /\{[^}]*\}/g;
 const LAYOUT_TRANSPARENT_TAGS = new Set([
   'veda-if', 'veda-loop', 'veda-context', 'veda-slot', 'veda-place',
 ]);
@@ -112,45 +109,6 @@ function assignExprPath(context, expr, value) {
 }
 
 // ============================================================================
-// TEMPLATE ENGINE (html, raw, safe)
-// ============================================================================
-
-const marker = Date.now();
-const re = new RegExp(`^${marker}`);
-
-export function raw (strings, ...values) {
-  let result = '';
-  for (let i = 0; i < strings.length; i++) {
-    let value = values[i] ?? '';
-    if (Array.isArray(value)) value = value.join(' ');
-    result += strings[i] + value;
-  }
-  return marker + result.trimEnd();
-}
-
-export function html (strings, ...values) {
-  let result = '';
-  for (let i = 0; i < strings.length; i++) {
-    let value = values[i] ?? '';
-    if (Array.isArray(value)) {
-      value = value.map(v => re.test(v) ? v : safe(v)).join(' ');
-    } else {
-      value = re.test(value) ? value : safe(value);
-    }
-    result += strings[i] + value;
-  }
-  return marker + result.trimEnd();
-}
-
-export function safe (value) {
-  if (Array.isArray(value)) return value.map(safe);
-  if (typeof value !== 'string' && !(value instanceof String)) return value;
-  return value
-    .replace(HTML_ESCAPE_REGEX, char => HTML_ESCAPE_MAP[char])
-    .replace(SAFE_EXPR_REGEX, '');
-}
-
-// ============================================================================
 // EXPRESSION HELPERS
 // ============================================================================
 
@@ -170,6 +128,7 @@ function sanitizeExpressionResult(value) {
 export default function Component (ElementClass = HTMLElement, ModelClass = Model) {
   return class ComponentClass extends ElementClass {
     static tag = 'veda-component';
+    static bindingStrategy = null;
     static toString () { return this.tag; }
 
     // ---------- Private Fields ----------
@@ -182,6 +141,7 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
     #eventListeners = [];
     #isReactive = false;
     #holdsSubscription = false;
+    #instance = null;
     template;
 
     // ---------- Constructor & Lifecycle ----------
@@ -245,6 +205,10 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
         }
         this.#cleanupEffects();
         this.#cleanupEventListeners();
+        if (this.#instance) {
+          this.#instance.destroy();
+          this.#instance = null;
+        }
         if (this.#holdsSubscription) {
           Subscription.release(this);
           this.#holdsSubscription = false;
@@ -287,7 +251,7 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
     // ---------- Lifecycle Hooks (override in subclass) ----------
     added () {}
     pre () {}
-    render () { return this.template ?? this.innerHTML; }
+    render () { return this._compiledTemplate ?? this.template ?? this.innerHTML; }
     post () {}
     removed () {}
 
@@ -295,7 +259,9 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
     _cleanupAllEventListeners() { this.#cleanupEventListeners(); }
     _getRenderEffectsCount() { return this.#renderEffects.length; }
     _extractRenderEffects(startIndex) { return this.#renderEffects.splice(startIndex); }
-    _getEventListenersCount() { return this.#eventListeners.length; }
+    _getEventListenersCount() {
+      return this.#eventListeners.length + (this.#instance?.getEventListenersCount?.() || 0);
+    }
     _extractEventListeners(startIndex) { return this.#eventListeners.splice(startIndex); }
     _stopEventListeners(listeners) {
       if (!listeners) return;
@@ -315,10 +281,42 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
       return null;
     }
 
+    // Place moves its rendered children out of the component; patching in place
+    // would leave nothing to move. It must remount on every update.
+    _reuseTemplateInstance() {
+      return true;
+    }
+
+    // Called after an old template instance was destroyed and before a new
+    // one is mounted. Components that move rendered nodes elsewhere can clean
+    // them up here.
+    _onTemplateInstanceReplaced() {}
+
     _resolveDeferred() {
       this.#resolveDeferredFn?.();
       this.#resolveDeferredFn = null;
     }
+
+    // Child components created after update() (If content, Loop items) still
+    // need to be awaited by rendered.
+    _addChildrenRendered(promises) {
+      if (!promises) return;
+      for (const promise of promises) {
+        if (promise && !this.#childrenRendered.includes(promise)) {
+          this.#childrenRendered.push(promise);
+        }
+      }
+    }
+
+    // Values authored by the parent template and used by ${} segments inside
+    // this component's captured child template.
+    _setTemplateValues(values) {
+      this._templateValues = values;
+      if (this.#instance) this.#instance.setValues(values);
+      this._onTemplateValuesChanged(values);
+    }
+
+    _onTemplateValuesChanged() {}
 
     // ---------- Render Pipeline ----------
     async update () {
@@ -326,6 +324,8 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
       try {
         this.#childrenRendered = [];
         this.refs = {};
+        // Compatibility safety net: only legacy/custom _process() users fill
+        // these lists. Built-in components use TemplateInstance Parts.
         this.#renderEffects.forEach(c => c());
         this.#renderEffects = [];
         this.#cleanupEventListeners();
@@ -333,39 +333,66 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
         const pre = this.pre();
         if (pre instanceof Promise) await pre;
 
-        let html = this.render();
-        if (html instanceof Promise) html = await html;
-        if (typeof html === 'undefined') {
+        let result = this.render();
+        if (result instanceof Promise) result = await result;
+        if (typeof result === 'undefined') {
+          if (this.#instance) {
+            this.#instance.destroy();
+            this.#instance = null;
+          }
           const post = this.post();
           if (post instanceof Promise) await post;
           return;
         }
 
-        html = typeof html === 'string' ? html.replaceAll(marker, '') : html;
-        let template = document.createElement('template');
-        template.innerHTML = html;
-        let fragment = template.content;
-
-        this._process(fragment, this._processEvalContext());
+        const fromCompiled = result instanceof CompiledTemplate;
+        const compiled = fromCompiled ? result : compileTemplate(result);
+        const values = fromCompiled ? (this._templateValues || []) : null;
 
         const container = this.hasAttribute('shadow')
           ? this.shadowRoot ?? (this.attachShadow({mode: 'open'}), this.shadowRoot)
           : this;
-        container.replaceChildren(fragment);
+
+        if (this._reuseTemplateInstance() && this.#instance && this.#instance.compiled === compiled) {
+          // Same call-site template: patch parts in place, keep the DOM tree
+          // (and child components) alive.
+          if (fromCompiled) this.#instance.setValues(values);
+          else this.#instance.setResult(result);
+          this.#instance.refreshRefs();
+        } else {
+          this.#instance?.destroy();
+          this._onTemplateInstanceReplaced();
+          const options = {
+            result,
+            strategy: this.constructor.bindingStrategy || undefined,
+          };
+          if (fromCompiled) options.values = values;
+          this.#instance = compiled.instantiate(this.#createEvalContext(), this, options);
+          this.#instance.mount(container);
+        }
+
+        this.#childrenRendered = this.#instance.childrenRendered;
 
         if (typeof window !== 'undefined' && window.__VEDA_DEVTOOLS_HOOK__) {
           window.__VEDA_DEVTOOLS_HOOK__.trackComponentRender(this, _renderStart);
         }
 
-        const post = this.post(fragment);
+        const post = this.post(this.#instance?.fragment ?? null);
         if (post instanceof Promise) await post;
-
-        template.remove();
-        template = null;
-        fragment = null;
       } catch (error) {
         console.log(this, 'Component render error', error);
       }
+    }
+
+    #createEvalContext () {
+      const provided = this._processEvalContext();
+      if (provided) return provided;
+
+      const evalContext = this.state;
+      if (evalContext && typeof evalContext === 'object') {
+        Object.setPrototypeOf(evalContext, this);
+      }
+      return evalContext;
     }
 
     async populate () {
@@ -445,6 +472,10 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
       }
     }
 
+    /**
+     * @deprecated Legacy DOM walker retained for backward compatibility and
+     * external components. Built-ins now use TemplateInstance Parts.
+     */
     _process (fragment, evalContext = null) {
       const previousContext = this._currentEvalContext;
 
@@ -894,4 +925,6 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
   }
 }
 
-export {reactive, effect};
+factories.Component = Component;
+
+export {html, raw, safe, reactive, effect};

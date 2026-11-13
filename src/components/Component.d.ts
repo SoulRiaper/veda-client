@@ -1,6 +1,8 @@
 import Model from '../Model.js';
+import type {TemplateResult} from '../template/TemplateResult.js';
+import type {BindingStrategy} from '../template/BindingStrategy.js';
 
-export function html(strings: TemplateStringsArray, ...values: any[]): string;
+export function html(strings: TemplateStringsArray, ...values: any[]): TemplateResult;
 export function raw(strings: TemplateStringsArray, ...values: any[]): string;
 export function safe(value: any): string | string[];
 
@@ -23,7 +25,7 @@ export interface ComponentInstance<M extends Model = Model> {
 
   added(): void | Promise<void>;
   pre(): void | Promise<void>;
-  render(): string | Promise<string> | undefined;
+  render(): string | TemplateResult | Promise<string | TemplateResult> | undefined;
   post(fragment?: DocumentFragment): void | Promise<void>;
   removed(): void | Promise<void>;
 
@@ -47,6 +49,7 @@ export interface ComponentInstance<M extends Model = Model> {
 export interface ComponentConstructor {
   new (): HTMLElement & ComponentInstance;
   tag: string;
+  bindingStrategy?: BindingStrategy | null;
   toString(): string;
 }
 

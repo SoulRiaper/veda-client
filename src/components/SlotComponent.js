@@ -1,5 +1,6 @@
 import Component from './Component.js';
 import {toRaw} from '../Reactive.js';
+import {compileTemplate} from '../template/Template.js';
 
 const MAX_TREE_DEPTH = 20;
 
@@ -25,10 +26,16 @@ export default function SlotComponent(Class = HTMLElement) {
 
     #host = null;
     #isDisconnected = false;
+    #instance = null;
+    #instanceKey = null;
+    #instanceContext = null;
 
     async connectedCallback() {
       this.#isDisconnected = false;
       this.#host = this.#host || this.#resolveHost();
+      this.#instance = null;
+      this.#instanceKey = null;
+      this.#instanceContext = null;
       this.replaceChildren();
       this._deferRendered();
       await super.connectedCallback();
@@ -38,33 +45,95 @@ export default function SlotComponent(Class = HTMLElement) {
     disconnectedCallback() {
       if (this.#isDisconnected) return;
       this.#isDisconnected = true;
-      this.#dropChildRefs();
+      this.#instance?.destroy();
+      this.#instance = null;
+      this.#instanceKey = null;
+      this.#instanceContext = null;
       this.replaceChildren();
       // Keep #host. Place may move this node to another parent and reconnect;
       // the layout host is no longer an ancestor after the move.
       super.disconnectedCallback?.();
     }
 
+    _processEvalContext() {
+      return null;
+    }
+
+    _getEventListenersCount() {
+      return super._getEventListenersCount() + (this.#instance?.getEventListenersCount?.() || 0);
+    }
+
+    _onTemplateValuesChanged() {
+      if (this.isConnected) this.#mount();
+    }
+
     render() {}
 
     post() {
-      if (this.#isDisconnected) return;
       this.#mount();
     }
 
     #mount() {
-      this._cleanupAllEventListeners();
-      this.#dropChildRefs();
-      this.replaceChildren();
+      if (this.#isDisconnected) return;
+
       const host = this.#host;
-      if (!host) return;
+      if (!host) {
+        this.replaceChildren();
+        return;
+      }
 
       const name = this.getAttribute('name') || 'default';
+      const projection = this.#buildProjection(host, name);
+      const evalContext = projection.hasProjected
+        ? host._vedaEvalContext || host
+        : host;
+      const values = projection.hasProjected ? [] : (this._templateValues || []);
+      const key = `${projection.hasProjected ? 'p' : 'f'}|${name}|${projection.key}`;
+
+      if (
+        this.#instance &&
+        this.#instanceKey === key &&
+        this.#instanceContext === evalContext
+      ) {
+        this._vedaRefsTarget = this.#refsOwner(evalContext, host);
+        try {
+          this.#instance.setValues(values);
+          this.#instance.refreshRefs();
+        } finally {
+          this._vedaRefsTarget = null;
+        }
+        return;
+      }
+
+      this.#instance?.destroy();
+      this.#instance = null;
+      this.replaceChildren();
+
+      this._vedaRefsTarget = this.#refsOwner(evalContext, host);
+      try {
+        const compiled = projection.compiled || compileTemplate(projection.markup);
+        const instance = compiled.instantiate(
+          evalContext,
+          this,
+          {values},
+        );
+        if (projection.hasProjected) this.#pinProjectedSlots(instance.fragment, evalContext);
+        this.append(instance.fragment);
+        this.#instance = instance;
+        this.#instanceKey = key;
+        this.#instanceContext = evalContext;
+      } finally {
+        this._vedaRefsTarget = null;
+      }
+    }
+
+    #buildProjection(host, name) {
       const tpl = document.createElement('template');
       tpl.innerHTML = host.template || '';
 
       const fragment = document.createDocumentFragment();
       let hasProjectedContent = false;
+
       for (const child of [...tpl.content.childNodes]) {
         if (child.nodeType === Node.TEXT_NODE) {
           if (name !== 'default' || !child.nodeValue.trim()) continue;
@@ -81,17 +150,18 @@ export default function SlotComponent(Class = HTMLElement) {
       }
 
       if (!hasProjectedContent && this.template) {
-        tpl.innerHTML = this.template;
-        fragment.appendChild(tpl.content.cloneNode(true));
+        return {
+          compiled: this._compiledTemplate || null,
+          markup: this.template,
+          key: this._compiledTemplate ? 'compiled' : this.template,
+          hasProjected: false,
+        };
       }
 
-      // Projected content belongs to the host's parent; fallback belongs to the host.
-      const evalContext = hasProjectedContent ? host._vedaEvalContext || host : host;
-      this._vedaRefsTarget = this.#refsOwner(evalContext, host);
-      this._process(fragment, evalContext);
-      if (hasProjectedContent) this.#pinProjectedSlots(fragment, evalContext);
-      this._vedaRefsTarget = null;
-      this.append(fragment);
+      const wrapper = document.createElement('template');
+      wrapper.content.appendChild(fragment);
+      const markup = wrapper.innerHTML;
+      return {compiled: null, markup, key: markup, hasProjected: hasProjectedContent};
     }
 
     // A forwarded outlet is cloned into the inner component, so its DOM parent
@@ -135,21 +205,12 @@ export default function SlotComponent(Class = HTMLElement) {
       return null;
     }
 
-    #dropChildRefs() {
-      const host = this.#host;
-      if (!host) return;
-      const evalContext = host._vedaEvalContext || host;
-      const owner = this._vedaRefsTarget || this.#refsOwner(evalContext, host);
-      if (!owner?.refs) return;
-      for (const [name, node] of Object.entries(owner.refs)) {
-        if (node && this.contains(node)) delete owner.refs[name];
-      }
-    }
-
     #refsOwner(evalContext, fallback) {
       let obj = evalContext;
       for (let i = 0; obj && i < MAX_TREE_DEPTH; i++) {
-        if (obj.refs && typeof obj.refs === 'object' && !Array.isArray(obj.refs)) return obj;
+        if (obj.refs && typeof obj.refs === 'object' && !Array.isArray(obj.refs)) {
+          return toRaw(obj) || obj;
+        }
         obj = Object.getPrototypeOf(obj);
       }
       return fallback;

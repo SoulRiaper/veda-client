@@ -357,4 +357,75 @@ export default ({test, assert}) => {
     assert(clicked === true, 'Click should call the page method');
     cleanup();
   });
+
+  test('Slot - remount does not throw when refs live on reactive author state', async () => {
+    class RemountHost extends Component(HTMLElement) {
+      static tag = `test-slot-remount-host-${Math.random().toString(36).slice(2, 8)}`;
+      render() {
+        return html`<${Slot} name="trigger"></${Slot}>`;
+      }
+    }
+    customElements.define(RemountHost.tag, RemountHost);
+
+    class RemountApp extends Component(HTMLElement) {
+      render() {
+        return html`
+          <${RemountHost}>
+            <button slot="trigger" ref="openBtn">Open</button>
+          </${RemountHost}>
+        `;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(RemountApp);
+    const host = component.querySelector(RemountHost.tag);
+    await host.rendered;
+
+    const button = host.querySelector('button');
+    const slot = host.querySelector('veda-slot');
+    assert(component.refs.openBtn === button, 'Ref should be registered on the author state');
+
+    await slot.update();
+    await host.rendered;
+
+    const remounted = host.querySelector('button');
+    assert(remounted instanceof Node, 'Remount should render the slotted button');
+    assert(component.refs.openBtn === remounted, 'Remount must re-register refs on reactive state');
+    cleanup();
+  });
+
+  test('Slot - fallback ${} values follow the layout render values', async () => {
+    class FallbackValueHost extends Component(HTMLElement) {
+      static tag = `test-slot-value-host-${Math.random().toString(36).slice(2, 8)}`;
+      constructor() {
+        super();
+        this.state.text = 'first';
+      }
+      render() {
+        return html`<div class="slot-value"><${Slot}>fallback ${this.state.text}</${Slot}></div>`;
+      }
+    }
+    customElements.define(FallbackValueHost.tag, FallbackValueHost);
+
+    class FallbackValueApp extends Component(HTMLElement) {
+      render() {
+        return html`<${FallbackValueHost}></${FallbackValueHost}>`;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(FallbackValueApp);
+    const host = component.querySelector(FallbackValueHost.tag);
+    await host.rendered;
+
+    const slot = host.querySelector('veda-slot');
+    assert(slot.textContent.includes('first'), 'Fallback ${} should render');
+
+    host.state.text = 'second';
+    await host.update();
+
+    assert(slot.textContent.includes('second'), 'Fallback ${} should update without remounting the Slot');
+
+    cleanup();
+  });
+
 };

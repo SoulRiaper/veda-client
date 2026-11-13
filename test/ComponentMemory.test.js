@@ -37,8 +37,8 @@ export default ({test, assert}) => {
     }
 
     assert(component._getEventListenersCount() === firstCount, 'Listener count should stay stable across update()');
-    assert(component.querySelector('.mem-update-btn') !== firstBtn, 'update() should replace the previous button');
-    assert(weakBtn.deref() !== firstBtn || !firstBtn.isConnected, 'Previous button should be detached');
+    assert(component.querySelector('.mem-update-btn') === firstBtn, 'update() should reuse the button when the template is unchanged');
+    assert(weakBtn.deref() === firstBtn && firstBtn.isConnected, 'Previous button should stay attached');
     component.querySelector('.mem-update-btn').click();
     cleanup();
   });

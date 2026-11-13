@@ -1433,17 +1433,23 @@ class MyComponent extends Component(HTMLElement) {
 
 ```
 1. update() called
-2. Old #renderEffects cleaned up       ← Old effects removed
-3. render() generates new template
-4. New #renderEffects created          ← New effects for new template
-5. post() lifecycle hook runs
+2. Legacy #renderEffects/listeners cleaned up  ← compatibility safety net
+3. render() returns TemplateResult / string / CompiledTemplate
+4. compileTemplate() (cached)         ← no re-parse for the same call-site
+5. Same template? patch Parts         ← DOM and child components stay alive
+   Different template? mount new instance (old DOM replaced)
+6. post() lifecycle hook runs
 ```
 
 **Key points:**
 - Effect cleanup happens **BEFORE** `removed()` lifecycle
-- Re-render clears old render effects **BEFORE** creating new ones
+- Same-template `update()` patches text/attributes and reuses child components
+- Built-in components no longer call `_process`; it remains for backward compatibility and custom components
+- `Virtual` still has its own manual `#prepareChildTemplates` path
+- Different-template `update()` replaces the subtree and cleans old Parts
 - User effects (via `this.effect()`) persist across re-renders
 - User effects are only cleaned up on disconnect
+- `refs` stay stable while the template is unchanged
 
 **Manual effects:**
 
@@ -2308,7 +2314,7 @@ customElements.define('my-formatted-property', MyFormattedProperty);
 2. **Reactive updates** - Effect tracks `this.model[this.prop]` automatically
 3. **Cleanup on disconnect** - Effect and value nodes cleaned up properly
 4. **Shadow DOM support** - Via `shadow` attribute
-5. **Template processing** - Calls `this._process(fragment)` for expression evaluation
+5. **Template processing** - Custom value templates use `CompiledTemplate` / `TemplateInstance` for expression evaluation
 
 **Lifecycle:**
 

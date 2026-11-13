@@ -157,6 +157,28 @@ Component state is automatically reactive:
 3. Stores effects in #renderEffects for cleanup
 4. Cleanup on disconnect or re-render
 
+### Template Compilation and Parts
+
+Since the template engine update the render pipeline is template-based:
+
+```
+render() → TemplateResult {strings, values}
+        → compileTemplate() (cached per call-site)
+        → CompiledTemplate: static <template> + PartDescriptor[]
+        → TemplateInstance: cloned DOM + Part objects
+        → Part.setValue() / effect → minimal DOM write
+```
+
+- `html` returns a `TemplateResult` that extends `String`, so existing code
+  that treats it as a string keeps working.
+- `{}` expressions stay reactive and are compiled into Parts (text,
+  attribute, property, event, ref, bind).
+- `${}` values are lazy template values; tag names, attribute names and
+  `is` are folded statically.
+- On `update()` with the same template, the existing DOM tree and child
+  components are reused and only changed Parts are written.
+- Full details and current limitations: [TEMPLATE_ENGINE.md](./TEMPLATE_ENGINE.md).
+
 ### Expression Processing
 
 Template expressions `{this.count}` are parsed and bound:
