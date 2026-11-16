@@ -1401,7 +1401,9 @@ class MyComponent extends Component(HTMLElement) {
 ### Template API (breaking)
 
 ```js
-import { html, render, unsafeHTML, nothing, noChange } from 'veda-client';
+import {
+  html, render, unsafeStatic, unsafeHTML, nothing, noChange,
+} from 'veda-client';
 
 const view = (name) => html`<div class="greeting">${name}</div>`;
 render(view('Ada'), document.querySelector('#app'));
@@ -1414,21 +1416,33 @@ render(view('Ada'), document.querySelector('#app'));
 - `nothing` removes the value at that position; `noChange` keeps the previous
   value; `unsafeHTML(value)` renders trusted markup. Ordinary strings are
   always text.
-- `${}` is supported in text and attribute values. Dynamic tag names,
-  attribute names and `${attrs}` snippets are validated: a value cannot add
-  elements, `on*` handlers or `srcdoc`; `on${name}="{expression}"` is allowed.
-- `${}` snippets are **static markup**: they may not contain `<`, `>`, `{}`,
-  `on*` or `srcdoc`. Expressions must be written in the template itself.
-- `${}` is **not** supported in `<script>`/`<style>` or nested `<template>`
-  content — and there is no `{expression}` form there either; build those
-  nodes imperatively. `key`/`as`/height are static framework configuration,
-  `ref` is a static name, and `items`/`condition`/`bind`/`on*` take
-  `{expression}`.
-- A static (non-expression) `on*` attribute and a `srcdoc` attribute are
-  compile errors. Use `{expression}` for handlers and `unsafeHTML()` or
-  imperative DOM for `srcdoc`.
+- **A value never becomes markup.** `${}` is supported in text, attribute
+  values and spread slots. A tag name or attribute name must be authored, or
+  passed through `unsafeStatic(value)` (trusted static source, never user
+  input) or a Component class that declares its own `static tag`. A class
+  without its own `static tag` is an error instead of silently compiling to
+  `veda-component`.
+- `${attrs}` takes an **object** (or `Map`), applied through the DOM API:
+  `name` sets an attribute, `?name` a boolean, `.name` a property, `@name` an
+  event listener (function). Keys that disappear are removed on the next
+  update. Strings are rejected — markup is never parsed from a value.
+- Data may not set `on*` content attributes, `srcdoc`, `innerHTML`/
+  `outerHTML`, framework attributes (`items`, `condition`, `key`, `as`,
+  `item-key`, `height`, `item-height`, `overscan`), `bind`, `ref`, `about`,
+  `property`, `rel`, `is`, `slot` or the reserved `data-veda-*` namespace.
+- `javascript:`/`vbscript:` URL values are refused when written to `href`,
+  `src`, `action`, `formaction` and similar attributes.
+- `${}` is **not** supported in `<script>`/`<style>`, HTML comments or nested
+  `<template>` content — values never enter markup. `key`/`as`/height are
+  static framework configuration, `ref` is a static name, and
+  `items`/`condition`/`bind`/`on*` take `{expression}`.
+- A static (non-expression) `on*` attribute, a `srcdoc` attribute, and the
+  `:srcdoc`/`:on*`/`:innerHTML`/`:outerHTML` property bindings are compile
+  errors. Use `{expression}` for handlers and `unsafeHTML()` for trusted
+  markup.
 - `TemplateResult` is marker-based; a `ChildPart` inserts nodes before its
-  own marker, so one structured value cannot shift a sibling Part.
+  own marker, so one structured value cannot shift a sibling Part. Marker
+  names are randomized per page load.
 - `PathBindingStrategy`/`BindingStrategy` were removed in this release.
 
 ### Effect Cleanup Timing

@@ -5,7 +5,10 @@ import {If} from '../src/components/IfComponent.js';
 import {flushEffects} from '../src/Effect.js';
 import {createTestComponent, createTestContainer} from './helpers.js';
 import {clearTemplateCache, compileTemplate, getTemplateCacheStats, render} from '../src/template/Template.js';
-import {TemplateResult, nothing, noChange, unsafeHTML} from '../src/template/TemplateResult.js';
+import {
+  TemplateResult, nothing, noChange, unsafeHTML, unsafeStatic,
+} from '../src/template/TemplateResult.js';
+import {ELEMENT_MARKER} from '../src/template/markers.js';
 
 export default ({test, assert}) => {
 
@@ -88,27 +91,119 @@ export default ({test, assert}) => {
     cleanup();
   });
 
-  test('TemplateEngine - dynamic tag and attribute names are compiled', async () => {
+  test('TemplateEngine - static tag and attribute names come from unsafeStatic', async () => {
     class Dynamic extends Component(HTMLElement) {
       constructor() {
         super();
         this.state.value = 'one';
       }
       render() {
-        return html`<div><${'section'} ${'data-x'}="{this.state.value}">text</${'section'}></div>`;
+        return html`<div><${unsafeStatic('section')} ${unsafeStatic('data-x')}="{this.state.value}">text</${unsafeStatic('section')}></div>`;
       }
     }
 
     const {component, cleanup} = await createTestComponent(Dynamic);
     const section = component.querySelector('section');
-    assert(section !== null, 'Dynamic tag name should create a section');
-    assert(section.getAttribute('data-x') === 'one', 'Dynamic attribute name should be set');
+    assert(section !== null, 'A static-trusted tag name should create the element');
+    assert(section.getAttribute('data-x') === 'one', 'A static-trusted attribute name should be set');
 
     component.state.value = 'two';
     await flushEffects();
-    assert(section.getAttribute('data-x') === 'two', 'Dynamic attribute should be reactive');
+    assert(section.getAttribute('data-x') === 'two', 'The attribute value should stay reactive');
 
     cleanup();
+  });
+
+  test('TemplateEngine - a spread object applies attributes through the DOM', async () => {
+    class SpreadApp extends Component(HTMLElement) {
+      constructor() {
+        super();
+        this.state.attrs = {class: 'one', 'data-value': 1, '?disabled': false};
+      }
+      render() {
+        return html`<button class="base" ${this.state.attrs}>go</button>`;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(SpreadApp);
+    const button = component.querySelector('button');
+    assert(button.className === 'one', 'class from the spread should be applied');
+    assert(button.getAttribute('data-value') === '1', 'attribute from the spread should be applied');
+    assert(!button.hasAttribute('disabled'), '?name should not set a falsy boolean');
+
+    component.state.attrs = {class: 'two', '?disabled': true};
+    await component.update();
+    await flushEffects();
+    assert(button.className === 'two', 'spread values should update in place');
+    assert(button.hasAttribute('disabled'), '?name should set a truthy boolean');
+    assert(!button.hasAttribute('data-value'), 'stale spread keys should be removed');
+
+    cleanup();
+  });
+
+  test('TemplateEngine - a spread reads its own value after other interpolations', () => {
+    const {container, cleanup} = createTestContainer();
+    const view = (attrs, title) => html`<div title="${title}" ${attrs}>hi</div>`;
+
+    render(view({class: 'one'}, 'a'), container);
+    const div = container.firstElementChild;
+    assert(div.getAttribute('title') === 'a', 'The preceding value should stay in its position');
+    assert(div.className === 'one', 'The spread should read its own value, not the preceding one');
+
+    render(view({class: 'two', 'data-x': '1'}, 'b'), container);
+    assert(container.firstElementChild === div, 'The element should be patched in place');
+    assert(div.getAttribute('title') === 'b', 'The preceding value should update');
+    assert(div.className === 'two', 'The spread should update');
+    assert(div.getAttribute('data-x') === '1', 'The spread should keep its own attributes');
+    cleanup();
+  });
+
+  test('TemplateEngine - unsafeStatic works as a value too', () => {
+    const container = document.createElement('div');
+    render(html`<div class="${unsafeStatic('cls')}" data-x="${unsafeStatic('v')}">text</div>`, container);
+    const div = container.firstElementChild;
+    assert(div.className === 'cls', 'A static value in an attribute value is its string');
+    assert(div.getAttribute('data-x') === 'v', 'A static value in an attribute value is its string');
+    assert(div.textContent === 'text');
+  });
+
+  test('TemplateEngine - a component class must own its static tag', () => {
+    class NoTag extends Component(HTMLElement) {}
+    assert.throws(
+      () => compileTemplate(html`<${NoTag}></${NoTag}>`),
+      /has no own "static tag"/,
+    );
+
+    class WithTag extends Component(HTMLElement) {
+      static tag = 'test-engine-own-tag';
+    }
+    const compiled = compileTemplate(html`<${WithTag}></${WithTag}>`);
+    assert(compiled.source.includes('<test-engine-own-tag></test-engine-own-tag>'),
+      'A class with its own static tag should fold');
+  });
+
+  test('TemplateEngine - unsafeStatic cannot be forged by JSON', () => {
+    // The brand is a symbol, so a value that went through JSON.parse (or any
+    // other data channel) can never be mistaken for trusted static source.
+    const forged = JSON.parse('{"value":"section"}');
+    assert.throws(
+      () => compileTemplate(html`<${forged}></${forged}>`),
+      /Dynamic tag names are not supported/,
+    );
+    // A Component class with a static tag is trusted code, not data.
+    class Trusted extends Component(HTMLElement) {
+      static tag = 'test-engine-trusted-json';
+    }
+    const compiled = compileTemplate(html`<${Trusted}></${Trusted}>`);
+    assert(compiled.source.includes('<test-engine-trusted-json>'), 'A class tag should fold');
+  });
+
+  test('TemplateEngine - a data string is not a spread object', () => {
+    const container = document.createElement('div');
+    assert.throws(
+      () => render(html`<div ${'data-x="1"'}></div>`, container),
+      /expects an object/,
+    );
   });
 
   test('TemplateEngine - child component is reused across parent update()', async () => {
@@ -135,7 +230,7 @@ export default ({test, assert}) => {
         this.state.label = 'a';
       }
       render() {
-        return html`<p>{this.state.label}</p><${childTag}></${childTag}>`;
+        return html`<p>{this.state.label}</p><${unsafeStatic(childTag)}></${unsafeStatic(childTag)}>`;
       }
     }
 
@@ -436,12 +531,11 @@ export default ({test, assert}) => {
     cleanup();
   });
 
-  test('TemplateEngine - ${} inside a comment is escaped, not injected as markup', () => {
-    const compiled = compileTemplate(html`<!-- ${'--> <img class="pwn">'} -->`);
-    const source = compiled.template.innerHTML;
-
-    assert(!source.includes('<img'), 'Comment value must not create an element');
-    assert(source.includes('&lt;img'), 'Comment value should be escaped');
+  test('TemplateEngine - ${} inside an HTML comment is a compile error', () => {
+    assert.throws(
+      () => compileTemplate(html`<!-- ${'--> <img class="pwn">'} -->`),
+      /comments are not supported/,
+    );
   });
 
   test('TemplateEngine - ${} inside script/style raw text is rejected', () => {
@@ -473,7 +567,7 @@ export default ({test, assert}) => {
         this.state.tag = 'section';
       }
       render() {
-        return html`<${this.state.tag} class="dynamic-tag">text</${this.state.tag}>`;
+        return html`<${unsafeStatic(this.state.tag)} class="dynamic-tag">text</${unsafeStatic(this.state.tag)}>`;
       }
     }
 
@@ -634,13 +728,17 @@ export default ({test, assert}) => {
     cleanup();
   });
 
-  test('TemplateEngine - invalid is values are rejected instead of injected', () => {
+  test('TemplateEngine - is values require a class or unsafeStatic', () => {
     assert.throws(
       () => compileTemplate(html`<div is='${"x' onmouseover='alert(1)"}'></div>`),
-      /Invalid is=/,
+      /requires a Component class or unsafeStatic/,
     );
     assert.throws(
       () => compileTemplate(html`<div is=${"foo onmouseover=alert(1)"}></div>`),
+      /requires a Component class or unsafeStatic/,
+    );
+    assert.throws(
+      () => compileTemplate(html`<div is="${unsafeStatic('plain')}"></div>`),
       /Invalid is=/,
     );
   });
@@ -675,24 +773,37 @@ export default ({test, assert}) => {
     assert(compiled.source.includes('items="{this.state.items}"'), 'Semantic Loop keeps items');
   });
 
-  test('TemplateEngine - dynamic tag names cannot inject markup', () => {
+  test('TemplateEngine - dynamic tag names require explicit trust and cannot inject markup', () => {
+    // Plain strings are data: they never become markup.
     assert.throws(
       () => compileTemplate(html`<${'123'}></${'123'}>`),
-      /Invalid dynamic tag name/,
+      /Dynamic tag names are not supported/,
     );
     assert.throws(
       () => compileTemplate(html`<${'img src=x onerror=alert(1)'}></div>`),
-      /Invalid dynamic (tag name|attribute snippet)/,
+      /Dynamic tag names are not supported/,
     );
     assert.throws(
       () => compileTemplate(html`<div></${'div><img src=x onerror=alert(1)>'}>`),
-      /Invalid dynamic/,
+      /Dynamic tag names are not supported/,
     );
     assert.throws(
       () => compileTemplate(html`<${'div onclick=alert(1)'}></div>`),
-      /Invalid dynamic/,
+      /Dynamic tag names are not supported/,
     );
-    // A Component class still folds to its static tag.
+
+    // unsafeStatic() is trusted, but it is still a name: markup and dangerous
+    // elements are rejected.
+    assert.throws(
+      () => compileTemplate(html`<${unsafeStatic('<img src=x>')}></${unsafeStatic('img>')}>`),
+      /Invalid dynamic tag name/,
+    );
+    assert.throws(
+      () => compileTemplate(html`<${unsafeStatic('script')}></${unsafeStatic('script')}>`),
+      /cannot be created/,
+    );
+
+    // A Component class is always trusted and keeps folding to its tag.
     class SafeTag extends Component(HTMLElement) {
       static tag = 'test-engine-safe-tag';
     }
@@ -701,33 +812,36 @@ export default ({test, assert}) => {
       'Component classes must keep folding to their tag');
   });
 
-  test('TemplateEngine - dynamic attribute names and snippets cannot inject handlers', () => {
+  test('TemplateEngine - attribute names never come from data', () => {
+    // A data value in an attribute-name position is never a name.
     assert.throws(
       () => compileTemplate(html`<div ${'onclick'}="alert(1)"></div>`),
-      /Invalid dynamic attribute name/,
+      /Dynamic attribute names are not supported/,
     );
     assert.throws(
       () => compileTemplate(html`<div on${'click'}="alert(1)"></div>`),
-      /Invalid dynamic attribute name/,
+      /Dynamic attribute names are not supported/,
     );
     assert.throws(
-      () => compileTemplate(html`<div ${'onmouseover=window.x=1'}></div>`),
-      /on\* handlers must use \{expression\}/,
-    );
-    assert.throws(
-      () => compileTemplate(html`<div ${'x><img src=x onerror=alert(1)'}></div>`),
-      /markup is not allowed/,
-    );
-    assert.throws(
-      () => compileTemplate(html`<div ${'srcdoc="<img src=x onerror=alert(1)>"'}></div>`),
-      /markup is not allowed|srcdoc/,
+      () => compileTemplate(html`<div data-${'id'}="1"></div>`),
+      /Dynamic attribute names are not supported/,
     );
 
-    // Ordinary attribute names and static-looking snippets keep working.
-    const named = compileTemplate(html`<div data-${'id'}="1"></div>`);
-    assert(named.source.includes('data-id="1"'), 'Dynamic attribute name fragment should fold');
-    const snippet = compileTemplate(html`<div data-x=foo ${'data-y="1" disabled'}></div>`);
-    assert(snippet.source.includes('data-y="1"'), 'Attribute snippet should fold as markup');
+    // A string in a whole slot is a spread value, and a spread value must be an
+    // object: markup is never parsed from data.
+    const container = document.createElement('div');
+    for (const payload of [
+      'onmouseover=window.x=1',
+      'x><img src=x onerror=alert(1)',
+      'srcdoc="<img src=x onerror=alert(1)>"',
+      'title="&#123;globalThis.__pwn=42&#125;"',
+    ]) {
+      assert.throws(
+        () => render(html`<div ${payload}></div>`, container),
+        /expects an object/,
+        `snippet ${JSON.stringify(payload)} must not be parsed`,
+      );
+    }
   });
 
   test('TemplateEngine - an HTML comment inside an attribute stays data', async () => {
@@ -754,11 +868,12 @@ export default ({test, assert}) => {
     cleanup();
   });
 
-  test('TemplateEngine - an attribute snippet after an unquoted literal is markup', () => {
-    const compiled = compileTemplate(html`<div data-x=foo ${'data-y="1"'}></div>`);
-    assert(!compiled.source.includes('\uE000'), 'No template token should leak into the source');
-    const source = compiled.source;
-    assert(source.includes('data-y="1"'), 'The snippet should be folded as attributes');
+  test('TemplateEngine - a spread after an unquoted literal stays a DOM slot', () => {
+    const container = document.createElement('div');
+    render(html`<div data-x=foo ${{'data-y': '1'}}></div>`, container);
+    const div = container.firstElementChild;
+    assert(div.getAttribute('data-x') === 'foo', 'The literal unquoted value should stay');
+    assert(div.getAttribute('data-y') === '1', 'The spread should apply through the DOM');
   });
 
   test('TemplateEngine - html("...") reuses the string cache and the mounted DOM', async () => {
@@ -801,6 +916,21 @@ export default ({test, assert}) => {
     assert(component.querySelector('.nested-input') === input, 'Nested input should be reused');
     assert(document.activeElement === input, 'Focus should survive the nested patch');
     assert(component.querySelector('.nested-input').value === 'two', 'Nested value should update');
+    cleanup();
+  });
+
+  test('TemplateEngine - clearing a parent removes nodes added by a nested template later', () => {
+    const {container, cleanup} = createTestContainer();
+    const view = (value, show = true) => html`<div>${show ? html`${value}<span>end</span>` : null}</div>`;
+
+    render(view('one'), container);
+    assert(container.innerHTML === '<div>one<span>end</span></div>', 'Initial nested text');
+
+    render(view(html`<b>bold</b>`), container);
+    assert(container.innerHTML === '<div><b>bold</b><span>end</span></div>', 'Nested template replaces text');
+
+    render(view(null, false), container);
+    assert(container.innerHTML === '<div></div>', 'Clearing the parent must remove nested nodes');
     cleanup();
   });
 
@@ -910,76 +1040,76 @@ export default ({test, assert}) => {
   });
 
 
-  test('TemplateEngine - folded values cannot create handlers or srcdoc', () => {
-    const splits = (text) => {
-      const pairs = [];
-      for (let i = 0; i <= text.length; i++) pairs.push([text.slice(0, i), text.slice(i)]);
-      return pairs;
-    };
+  test('TemplateEngine - spread supports properties and event listeners', () => {
+    const calls = [];
+    const container = document.createElement('div');
+    render(html`<button ${{
+      '@click': () => calls.push('a'),
+      '.value': 'one',
+      'aria-label': 'x',
+    }}>go</button>`, container);
+    const button = container.firstElementChild;
+    button.click();
+    assert.deepEqual(calls, ['a'], 'A spread @event should add a listener');
+    assert(button.value === 'one', 'A spread .property should set the property');
+    assert(button.getAttribute('aria-label') === 'x', 'A spread name should set the attribute');
 
-    // A folded value may supply a whole snippet or a name fragment. No split
-    // combination may smuggle an inline handler into the compiled markup.
-    for (const [a, b] of splits('onclick')) {
-      assert.throws(
-        () => compileTemplate(html`<div ${a}${b}="alert(1)"></div>`),
-        /handler|snippet|Invalid dynamic/,
-        `onclick split as ${JSON.stringify([a, b])} must not compile`,
-      );
-    }
-    for (const [a, b] of splits('onerror')) {
-      assert.throws(
-        () => compileTemplate(html`<img ${a}${b}="alert(1)">`),
-        /handler|snippet|Invalid dynamic/,
-        `onerror split as ${JSON.stringify([a, b])} must not compile`,
-      );
-    }
-
-    // Whitespace between the folded name and an authored value is not a snippet.
+    // A spread listener must be a function, and names stay validated.
     assert.throws(
-      () => compileTemplate(html`<div ${'onclick '}="alert(1)"></div>`),
-      /handler|snippet|Invalid dynamic/,
-    );
-
-    // srcdoc is parsed as HTML, so it has no safe Part representation.
-    for (const [a, b] of splits('srcdoc')) {
-      assert.throws(
-        () => compileTemplate(html`<iframe ${a}${b}="&lt;img src=x onerror=alert(1)&gt;"></iframe>`),
-        /srcdoc|snippet|Invalid dynamic/,
-        `srcdoc split as ${JSON.stringify([a, b])} must not compile`,
-      );
-    }
-    assert.throws(
-      () => compileTemplate(html`<iframe srcdoc="{this.state.html}"></iframe>`),
-      /srcdoc/,
+      () => render(html`<div ${{'@click': 'alert(1)'}}></div>`, document.createElement('div')),
+      /must be a function/,
     );
     assert.throws(
-      () => compileTemplate(html`<iframe srcdoc="<b>x</b>"></iframe>`),
-      /srcdoc/,
+      () => render(html`<div ${{'@bad name': () => {}}}></div>`, document.createElement('div')),
+      /Invalid event name/,
     );
-
-    // A folded snippet is spliced into markup and re-parsed; an embedded
-    // expression would turn data into evaluated Veda code.
     assert.throws(
-      () => compileTemplate(html`<div ${'title="{alert(1)}"'}></div>`),
-      /expressions must be authored/,
+      () => render(html`<div ${{'.onclick': 'alert(1)'}}></div>`, document.createElement('div')),
+      /event handler property/,
     );
-
-    // Static inline handlers are not executed by the framework; only the
-    // authored expression form is accepted.
     assert.throws(
-      () => compileTemplate(html`<button onclick="alert(1)">x</button>`),
-      /must use \{expression\}/,
+      () => render(html`<div ${{'.srcdoc': '<b>x</b>'}}></div>`, document.createElement('div')),
+      /framework attribute|unsafeHTML/,
+    );
+  });
+
+  test('TemplateEngine - data cannot inject expressions, framework attributes or sinks', () => {
+    const container = document.createElement('div');
+
+    // `items`/`condition` are evaluated as JavaScript by Loop/If, so they are
+    // framework attributes and only the template may author them.
+    assert.throws(
+      () => render(html`<div class="victim" ${{items: 'globalThis.__pwn=1'}}></div>`, container),
+      /framework attribute/,
+    );
+    assert.throws(
+      () => render(html`<div class="victim" ${{condition: 'globalThis.__pwn=1'}}></div>`, container),
+      /framework attribute/,
     );
 
-    // Attributes that merely start with "on" are not event handlers.
-    assert.doesNotThrow(
-      () => compileTemplate(html`<my-widget once="1" ontology="x"></my-widget>`),
-      'once/ontology are ordinary attributes',
+    // HTML sinks and event handler content attributes are refused.
+    assert.throws(
+      () => render(html`<div ${{onclick: 'alert(1)'}}></div>`, container),
+      /event handler attribute/,
+    );
+    assert.throws(
+      () => render(html`<iframe ${{srcdoc: '<b>x</b>'}}></iframe>`, container),
+      /framework attribute|not supported/,
     );
 
-    // The documented dynamic-name form stays valid.
-    const compiled = compileTemplate(html`<button on${'click'}="{this.save}">x</button>`);
-    assert(compiled.source.includes('onclick="{this.save}"'), 'on${name} with an authored expression stays valid');
+    // Compiler markers live in a reserved namespace and cannot be forged.
+    assert.throws(
+      () => render(html`<span ${{[ELEMENT_MARKER]: '1'}}></span>`, container),
+      /reserved|framework attribute/,
+    );
+  });
+
+  test('TemplateEngine - a script URL from a value is refused', () => {
+    const container = document.createElement('div');
+    assert.throws(
+      () => render(html`<a href="${'java\nscript:alert(1)'}">x</a>`, container),
+      /javascript:/,
+    );
   });
 
 

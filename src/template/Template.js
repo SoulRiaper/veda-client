@@ -1,5 +1,14 @@
-import {isTemplateResult, isUnsafeHTML, nothing, noChange, safe} from './TemplateResult.js';
-import {ELEMENT_MARKER, TEXT_MARKER_PREFIX, TEXT_MARKER_SUFFIX} from './markers.js';
+import {
+  isTemplateResult, isUnsafeHTML, isUnsafeStatic, nothing, noChange, safe,
+} from './TemplateResult.js';
+import {
+  ELEMENT_MARKER, SPREAD_MARKER_PREFIX, TEXT_MARKER_PREFIX, TEXT_MARKER_SUFFIX,
+  isSpreadMarker, spreadValueIndexOf,
+} from './markers.js';
+import {
+  ATTR_NAME_FRAGMENT_RE, ATTR_NAME_RE, DANGEROUS_ELEMENT_NAMES, FRAMEWORK_ATTRIBUTES,
+  assertSafePropertyBinding, describeValue,
+} from './security.js';
 import TemplateInstance from './TemplateInstance.js';
 import {getTemplateStats, recordTemplateStat, resetTemplateStats, TEMPLATE_ENGINE} from './stats.js';
 
@@ -8,18 +17,26 @@ export const TOKEN_SUFFIX = '\uE001';
 
 const TOKEN_AT_START = new RegExp(`^${TOKEN_PREFIX}(\\d+)${TOKEN_SUFFIX}`);
 const TOKEN_GLOBAL = new RegExp(`${TOKEN_PREFIX}(\\d+)${TOKEN_SUFFIX}`, 'g');
-const ATTR_ESCAPE_REGEX = /[&<>"]/g;
-const ATTR_ESCAPE_MAP = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'};
 
 // A marker attribute groups every Part that belongs to one element. It is
 // generated at compile time and removed when the instance resolves the Part.
 
 const RAW_TEXT_TAGS = new Set(['script', 'style']);
 const RCDATA_TAGS = new Set(['textarea', 'title']);
-const FRAMEWORK_ATTRS = new Set([
-  'condition', 'items', 'as', 'key', 'item-key',
-  'height', 'item-height', 'overscan',
-]);
+const FRAMEWORK_ATTRS = FRAMEWORK_ATTRIBUTES;
+
+// Trusted Types: the compiled template source is developer-authored markup, so
+// it is safe by construction (lit-html does the same with its `lit-html`
+// policy). This keeps the engine working under
+// `require-trusted-types-for 'script'` instead of throwing on innerHTML.
+const trustedTypes = globalThis.trustedTypes;
+const templatePolicy = trustedTypes?.createPolicy?.('veda-template', {
+  createHTML: (source) => source,
+});
+
+function trustedHTML(source) {
+  return templatePolicy ? templatePolicy.createHTML(source) : source;
+}
 
 const MAX_STRING_CACHE = 1000;
 const MAX_SHAPE_CACHE = 20;
@@ -52,6 +69,7 @@ function readTokenAt(source, index) {
 export function stringifyValue(value, type = 'html') {
   if (value == null) return '';
   if (Array.isArray(value)) return value.map(item => stringifyValue(item, type)).join(' ');
+  if (isUnsafeStatic(value)) return String(value.value ?? '');
   if (isTemplateResult(value)) return value.toString();
   if (isUnsafeHTML(value)) return String(value.value ?? '');
   if (type === 'raw') return String(value);
@@ -59,22 +77,9 @@ export function stringifyValue(value, type = 'html') {
   return String(value);
 }
 
-function stringifyTagValue(value, type) {
-  if (value == null) return '';
-  if (Array.isArray(value)) return value.map(item => stringifyTagValue(item, type)).join(' ');
-  if (isTemplateResult(value)) return value.toString();
-  return String(value);
-}
-
-function escapeAttribute(value) {
-  return String(value).replace(ATTR_ESCAPE_REGEX, char => ATTR_ESCAPE_MAP[char]);
-}
-
 const TAG_NAME_RE = /^[A-Za-z][A-Za-z0-9._:-]*$/;
 const TAG_NAME_FRAGMENT_RE = /^[A-Za-z0-9._:-]+$/;
-const ATTR_NAME_RE = /^[A-Za-z_:][A-Za-z0-9._:-]*$/;
-const HANDLER_NAME_RE = /^on[a-z]+$/i;
-const SNIPPET_ATTR_RE = /\b(on[a-z]+|srcdoc)\s*=\s*/gi;
+const CUSTOM_ELEMENT_RE = /^[a-z][a-z0-9._-]*-[a-z0-9._-]*$/i;
 
 // A DOM element exposes its event handler content attributes as IDL properties
 // (`onclick`, `onerror`, ...). Checking the property avoids treating ordinary
@@ -83,113 +88,97 @@ function isEventHandlerAttribute(element, name) {
   return name.startsWith('on') && name.length > 2 && name in element;
 }
 
-// `${}` in a tag name, attribute name or attribute snippet is folded into the
-// template markup. Unlike text and attribute *values*, that markup is parsed as
-// HTML, so a value must never be able to add elements, attributes or handlers.
-// A `${}` value in a tag name or attribute name is a name, not markup: validate
-// it, and reject handler names outright. `${attrs}` snippets stay supported for
-// static-looking attribute lists, but event handlers and srcdoc are refused.
-function assertSafeTagName(text) {
+// ---------------------------------------------------------------------------
+// Static-trusted values
+//
+// A `${}` in a name position would have to become template markup. That is only
+// safe for values that are authored code, so the compiler accepts exactly two
+// forms, mirroring lit-html's static.js:
+//
+//   - a Component class (it carries `static tag`);
+//   - an explicit `unsafeStatic('name')` wrapper. Its value is branded with a
+//     symbol, so ordinary data - including anything produced by `JSON.parse` -
+//     can never be mistaken for it.
+//
+// Every other value is a compile error. Data never becomes markup.
+// ---------------------------------------------------------------------------
+
+function staticValueText(value) {
+  if (isUnsafeStatic(value)) return String(value.value ?? '');
+  // Only a class that declares its own `static tag` is a tag name. Reading an
+  // inherited tag (every Component subclass inherits `veda-component`) would
+  // silently compile a wrong element, so it is not accepted.
+  if (
+    typeof value === 'function' &&
+    Object.prototype.hasOwnProperty.call(value, 'tag') &&
+    typeof value.tag === 'string'
+  ) {
+    return value.tag;
+  }
+  return null;
+}
+
+function tagNameFromStatic(value) {
+  const text = staticValueText(value);
+  if (text === null) {
+    if (typeof value === 'function') {
+      throw new Error(
+        `Dynamic tag names are not supported: component class ` +
+        `'${value.name || '(anonymous)'}' has no own "static tag". ` +
+        `Add "static tag = 'my-el'" or use unsafeStatic('my-el').`
+      );
+    }
+    throw new Error(
+      `Dynamic tag names are not supported (got ${describeValue(value)}). ` +
+      `Use a Component class or unsafeStatic('name').`
+    );
+  }
   if (!TAG_NAME_RE.test(text)) {
     throw new Error(
       `Invalid dynamic tag name '${text}': expected an element name, not markup`
     );
   }
+  if (DANGEROUS_ELEMENT_NAMES.has(text.toLowerCase())) {
+    throw new Error(
+      `The tag '${text}' cannot be created from a template interpolation; ` +
+      'build it imperatively or use unsafeHTML() for trusted markup'
+    );
+  }
+  return text;
 }
 
-function assertSafeTagNameFragment(text) {
+function tagNameFragmentFromStatic(value) {
+  const text = staticValueText(value);
+  if (text === null) {
+    throw new Error(
+      `Dynamic tag name fragments are not supported (got ${describeValue(value)}). ` +
+      `Use unsafeStatic('name') or author the tag name.`
+    );
+  }
   if (!TAG_NAME_FRAGMENT_RE.test(text)) {
     throw new Error(
       `Invalid dynamic tag name fragment '${text}': expected name characters only`
     );
   }
+  return text;
 }
 
-function assertSafeAttributeName(text) {
-  if (!ATTR_NAME_RE.test(text)) {
+// `is` selects the element class. A `${}` value there must be a Component class
+// or unsafeStatic(); a plain string could let data pick a registered component,
+// so it is rejected. Static author values are still validated below.
+function declarationFromStatic(value) {
+  const text = staticValueText(value);
+  if (text === null) {
     throw new Error(
-      `Invalid dynamic attribute name '${text}': names must be static, use {expression} for values`
+      `The "is" attribute requires a Component class or unsafeStatic('name') ` +
+      `(got ${describeValue(value)}).`
     );
   }
-}
-
-function readAttributeValue(rest) {
-  const source = rest.replace(/^\s*=\s*/, '');
-  const quote = source[0];
-  if (quote === '"' || quote === "'") {
-    const end = source.indexOf(quote, 1);
-    return end === -1 ? source.slice(1) : source.slice(1, end);
-  }
-  return (source.match(/^[^\s>]*/) || [''])[0];
-}
-
-// A handler name may be folded from `${}` only when the attribute value is an
-// authored `{expression}`. `on${'click'}="{this.handle}"` stays valid;
-// `on${'click'}="alert(1)"` and `on${'click'}="${code}"` are rejected.
-function assertSafeHandlerName(text, source, end) {
-  if (!HANDLER_NAME_RE.test(text)) return;
-  const rest = source.slice(end);
-  if (!/^\s*=/.test(rest)) return;
-  const value = readAttributeValue(rest).trim();
-  if (/^\{[^}]*\}$/.test(value)) return;
-  throw new Error(
-    `Invalid dynamic attribute name '${text}': on* handlers must use a {expression} value`
-  );
-}
-
-function assertSafeAttributeSnippet(text) {
-  if (/[<>]/.test(text)) {
-    throw new Error(`Invalid dynamic attribute snippet '${text}': markup is not allowed`);
-  }
-  // A folded snippet is spliced into the template markup and re-parsed, so an
-  // embedded {expression} would be evaluated as Veda code supplied by data.
-  // Expressions must be authored in the template itself.
-  if (/[{}]/.test(text)) {
+  if (!CUSTOM_ELEMENT_RE.test(text)) {
     throw new Error(
-      `Invalid dynamic attribute snippet '${text}': expressions must be authored in the template`
+      `Invalid is="${text}": expected a custom element tag name or a Component class with static tag`
     );
   }
-  for (const match of text.matchAll(SNIPPET_ATTR_RE)) {
-    if (match[1].toLowerCase() === 'srcdoc') {
-      throw new Error("Invalid dynamic attribute snippet: 'srcdoc' is not supported");
-    }
-    const rest = text.slice(match.index + match[0].length);
-    if (!/^["']?\s*\{/.test(rest)) {
-      throw new Error(
-        `Invalid dynamic attribute snippet '${text}': on* handlers must use {expression}`
-      );
-    }
-  }
-}
-
-function foldTagMarkup(value, state, type) {
-  const text = stringifyTagValue(value, type);
-  // An empty value contributes nothing: `${maybeAttrs}` with '' is a no-op.
-  if (text === '') return text;
-  if (state.tagStart) {
-    // A token before the first whitespace is part of the tag name, but the
-    // existing `<${Tag}${attrs}>` pattern also folds a leading attribute
-    // snippet there. A value with whitespace/`=` is a snippet, not a name.
-    if (/[\s=<>"']/.test(text)) {
-      assertSafeAttributeSnippet(text);
-      return text;
-    }
-    if (state.attrName === '' || state.attrName === '/') assertSafeTagName(text);
-    else assertSafeTagNameFragment(text);
-    return text;
-  }
-  const name = `${state.attrName}${text}`;
-  if (state.attrName) {
-    assertSafeAttributeName(name);
-    assertSafeHandlerName(name, state.source, state.end);
-    return text;
-  }
-  if (ATTR_NAME_RE.test(text)) {
-    assertSafeAttributeName(text);
-    assertSafeHandlerName(text, state.source, state.end);
-    return text;
-  }
-  assertSafeAttributeSnippet(text);
   return text;
 }
 
@@ -204,7 +193,7 @@ function declarationValue(value) {
   } else {
     text = value == null ? '' : String(value);
   }
-  if (!/^[a-z][a-z0-9._-]*-[a-z0-9._-]*$/i.test(text)) {
+  if (!CUSTOM_ELEMENT_RE.test(text)) {
     throw new Error(
       `Invalid is="${text}": expected a custom element tag name or a Component class with static tag`
     );
@@ -230,17 +219,30 @@ function buildTokenizedSource(strings, values) {
 }
 
 /**
- * Decide which tokens are static markup (tag names, attribute names, `is`,
- * raw text comments) and which remain dynamic parts.
+ * Classify every `${}` token by its syntactic position.
+ *
+ * The rule is the same one lit-html follows: a value is never spliced into
+ * template markup. Only static-trusted values (a Component class, or an
+ * explicit `unsafeStatic()` value) may resolve to a tag name; everything else
+ * becomes a Part and is written through the DOM API.
+ *
+ * Positions:
+ *   - text / attribute value          -> dynamic Part
+ *   - tag name (`<${Comp}>`)          -> static-trusted name, validated
+ *   - `is="..."` value                -> static-trusted declaration, validated
+ *   - attribute-name start (`${attrs}`) -> spread slot, applied from an object
+ *   - inside an attribute name        -> compile error
+ *   - comment / script / style / nested <template> -> compile error
  *
  * This is intentionally a small HTML-aware scanner, not a full parser. It only
- * needs to know whether a token is inside a tag (and if so, inside which
- * attribute value). Everything else is a text/attribute part.
+ * needs to know whether a token is inside a tag (and if so, in which position).
  */
-function foldStaticTokens(source, tokenMap, options = {}) {
-  const type = options.type || 'html';
-  const forceFold = options.forceFold === true;
+function classifyTemplateSource(source, tokenMap) {
   const modes = new Map();
+  // True when a token sits in an attribute-name position: whether it becomes a
+  // static name or a spread slot depends on the value, so the classification
+  // must not be cached for that call site.
+  let valueDependent = false;
   let out = '';
   let i = 0;
   let inTag = false;
@@ -254,6 +256,32 @@ function foldStaticTokens(source, tokenMap, options = {}) {
   let rawTextTag = null;
   let pendingRawTextTag = null;
 
+  const emitDynamic = (tokenInfo) => {
+    out += tokenInfo.text;
+    modes.set(tokenInfo.index, 'dynamic');
+  };
+
+  const emitStatic = (tokenInfo, text) => {
+    out += text;
+    modes.set(tokenInfo.index, 'static');
+  };
+
+  const emitSpread = (tokenInfo) => {
+    // A placeholder attribute keeps the spread inside the compiled <template>.
+    // It is generated with a random prefix and removed when the Part resolves.
+    // The suffix is the interpolation index so the Part reads its own value
+    // even when other `${}` values precede it.
+    out += `${SPREAD_MARKER_PREFIX}${tokenInfo.index}=""`;
+    modes.set(tokenInfo.index, 'spread');
+  };
+
+  const dynamicAttributeName = (name) => {
+    throw new Error(
+      `Dynamic attribute names are not supported ('${name}'). ` +
+      'Author the attribute name, or pass an object to ${attrs}.'
+    );
+  };
+
   while (i < source.length) {
     if (inComment) {
       if (source.startsWith('-->', i)) {
@@ -264,11 +292,9 @@ function foldStaticTokens(source, tokenMap, options = {}) {
       }
       const tokenInfo = isTokenAt(source, i) ? readTokenAt(source, i) : null;
       if (tokenInfo) {
-        const value = tokenMap.get(tokenInfo.index);
-        out += escapeAttribute(stringifyTagValue(value, type));
-        modes.set(tokenInfo.index, 'folded');
-        i = tokenInfo.end;
-        continue;
+        throw new Error(
+          'Expressions inside HTML comments are not supported; render a text node instead'
+        );
       }
       out += source[i++];
       continue;
@@ -281,13 +307,9 @@ function foldStaticTokens(source, tokenMap, options = {}) {
       } else {
         const tokenInfo = isTokenAt(source, i) ? readTokenAt(source, i) : null;
         if (tokenInfo) {
-          // Expressions in script/style cannot be represented as DOM Parts.
-          // They are rejected later by compileSource() instead of being
-          // half-escaped into executable code.
-          out += tokenInfo.text;
-          modes.set(tokenInfo.index, 'dynamic');
-          i = tokenInfo.end;
-          continue;
+          throw new Error(
+            `Expressions inside <${rawTextTag}> are not supported; build the node imperatively`
+          );
         }
         out += source[i++];
         continue;
@@ -304,16 +326,10 @@ function foldStaticTokens(source, tokenMap, options = {}) {
       }
       const tokenInfo = isTokenAt(source, i) ? readTokenAt(source, i) : null;
       if (tokenInfo) {
-        const name = attrName.toLowerCase();
-        if (forceFold) {
-          out += stringifyTagValue(tokenMap.get(tokenInfo.index), type);
-          modes.set(tokenInfo.index, 'folded');
-        } else if (name === 'is') {
-          out += escapeAttribute(declarationValue(tokenMap.get(tokenInfo.index)));
-          modes.set(tokenInfo.index, 'folded');
+        if (attrName.toLowerCase() === 'is') {
+          emitStatic(tokenInfo, declarationFromStatic(tokenMap.get(tokenInfo.index)));
         } else {
-          out += tokenInfo.text;
-          modes.set(tokenInfo.index, 'dynamic');
+          emitDynamic(tokenInfo);
         }
         i = tokenInfo.end;
         continue;
@@ -386,29 +402,51 @@ function foldStaticTokens(source, tokenMap, options = {}) {
       if (tokenInfo) {
         const isValue = expectingValue;
         expectingValue = false;
-        if (isValue && attrName.toLowerCase() === 'is') {
-          out += escapeAttribute(declarationValue(tokenMap.get(tokenInfo.index)));
-          modes.set(tokenInfo.index, 'folded');
-        } else if (isValue) {
-          // Unquoted attribute value: keep the token so AttributePart escapes
-          // it through the DOM instead of splicing markup.
-          out += tokenInfo.text;
-          modes.set(tokenInfo.index, 'dynamic');
+        if (isValue) {
+          if (attrName.toLowerCase() === 'is') {
+            emitStatic(tokenInfo, declarationFromStatic(tokenMap.get(tokenInfo.index)));
+          } else {
+            // Unquoted attribute value: keep the token so AttributePart escapes
+            // it through the DOM instead of splicing markup.
+            emitDynamic(tokenInfo);
+          }
         } else if (readingValue) {
           // A token spliced into an unquoted literal value, e.g. foo${bar}.
-          out += tokenInfo.text;
-          modes.set(tokenInfo.index, 'dynamic');
-        } else {
-          const foldedText = foldTagMarkup(
-            tokenMap.get(tokenInfo.index),
-            {tagStart, attrName, source, end: tokenInfo.end},
-            type,
+          emitDynamic(tokenInfo);
+        } else if (tagStart) {
+          const fragment = attrName !== '' && attrName !== '/';
+          emitStatic(
+            tokenInfo,
+            fragment
+              ? tagNameFragmentFromStatic(tokenMap.get(tokenInfo.index))
+              : tagNameFromStatic(tokenMap.get(tokenInfo.index)),
           );
-          // A tag-start snippet ends the tag-name phase; following tokens are
-          // attribute names/snippets, not more of the tag name.
-          if (tagStart && /[\s=<>"']/.test(foldedText)) tagStart = false;
-          out += foldedText;
-          modes.set(tokenInfo.index, 'folded');
+        } else {
+          // Attribute-name position. A static-trusted value (unsafeStatic, or
+          // a Component class for the whole name) is a name; anything else is
+          // a `${attrs}` spread slot. A token that is only part of a name, or
+          // that is followed by `=`, must be static: data never names an
+          // attribute.
+          const value = tokenMap.get(tokenInfo.index);
+          const staticName = staticValueText(value);
+          valueDependent = true;
+          if (attrName !== '') {
+            if (staticName === null || !ATTR_NAME_FRAGMENT_RE.test(staticName)) {
+              dynamicAttributeName(`${attrName}${describeValue(value)}`);
+            }
+            emitStatic(tokenInfo, staticName);
+          } else if (staticName !== null) {
+            if (!ATTR_NAME_RE.test(staticName)) dynamicAttributeName(staticName);
+            emitStatic(tokenInfo, staticName);
+          } else {
+            // `${attrs}` is only recognised as a whole slot: `foo${x}` and
+            // `${x}="v"` are attribute-name interpolation and stay unsupported.
+            const next = source[tokenInfo.end] ?? '';
+            if (next !== '' && !/\s/.test(next) && next !== '>' && next !== '/') {
+              dynamicAttributeName(describeValue(value));
+            }
+            emitSpread(tokenInfo);
+          }
         }
         readingValue = false;
         i = tokenInfo.end;
@@ -471,8 +509,7 @@ function foldStaticTokens(source, tokenMap, options = {}) {
 
     const tokenInfo = isTokenAt(source, i) ? readTokenAt(source, i) : null;
     if (tokenInfo) {
-      out += tokenInfo.text;
-      modes.set(tokenInfo.index, 'dynamic');
+      emitDynamic(tokenInfo);
       i = tokenInfo.end;
       continue;
     }
@@ -480,13 +517,18 @@ function foldStaticTokens(source, tokenMap, options = {}) {
     out += source[i++];
   }
 
-  return {foldedSource: out, modes};
+  return {foldedSource: out, modes, valueDependent};
 }
 
-function resolveTokensToLegacy(source, tokenMap, type) {
+function resolveTokensToLegacy(source, tokenMap, type, modes) {
   TOKEN_GLOBAL.lastIndex = 0;
   return source.replace(TOKEN_GLOBAL, (_, rawIndex) => {
-    return stringifyValue(tokenMap.get(Number(rawIndex)), type);
+    const index = Number(rawIndex);
+    // A spread slot is applied through the DOM and has no string form. The
+    // legacy string path is only used for Slot projection, which is already
+    // documented as lossy for `${}` values.
+    if (modes?.get(index) === 'spread') return '';
+    return stringifyValue(tokenMap.get(index), type);
   });
 }
 
@@ -546,11 +588,30 @@ function segmentsHaveExpressions(segments) {
   return segments.some(segment => segment.type === 'expr');
 }
 
-function hasDynamicContent(element) {
-  // Nested <template> content is inert and is not walked by the marker engine.
-  // A ${} token would leak into clones, so reject it; plain JS/CSS braces are
-  // ordinary static text and stay untouched.
-  return element.innerHTML.includes(TOKEN_PREFIX);
+// Nested <template> content is inert and is not walked by the marker engine, so
+// it must not contain Parts. It is still validated: a static `on*` handler or
+// `srcdoc` inside a template is the same HTML sink as anywhere else, and the
+// engine promises those are compile errors.
+function validateInertTemplate(element) {
+  if (element.innerHTML.includes(TOKEN_PREFIX)) {
+    throw new Error('Expressions inside a nested <template> are not supported');
+  }
+  const check = (root) => {
+    for (const node of root.querySelectorAll('*')) {
+      for (const attr of node.attributes) {
+        if (attr.name === 'srcdoc') {
+          throw new Error(
+            'The "srcdoc" attribute is not supported in templates; use unsafeHTML() or set it imperatively'
+          );
+        }
+        if (isEventHandlerAttribute(node, attr.name)) {
+          throw new Error(`The "${attr.name}" handler must use {expression}, not a static value`);
+        }
+      }
+      if (node.tagName.toLowerCase() === 'template') check(node.content);
+    }
+  };
+  check(element.content);
 }
 
 /**
@@ -571,6 +632,9 @@ export class CompiledTemplate {
     this.elements = [];
     // Child markers: one entry per dynamic text position.
     this.childParts = [];
+    // Per call-site token classification ('dynamic' | 'static' | 'spread').
+    // It depends only on the template source, not on the interpolated values.
+    this.modes = meta.modes || new Map();
   }
 
   instantiate(context, host, options) {
@@ -602,6 +666,14 @@ function processAttributes(element, partList, tokenMap, type, isComponent, stati
     const value = attr.value;
     const hasToken = value.includes(TOKEN_PREFIX);
     const hasExpr = value.includes(EXPR_OPEN);
+
+    // `${attrs}` in the attribute-name position. The value is applied as an
+    // object through the DOM API, never parsed as markup.
+    if (isSpreadMarker(name)) {
+      element.removeAttribute(name);
+      partList.push({type: 'spread', valueIndex: spreadValueIndexOf(name)});
+      continue;
+    }
 
     if (isComponent && isFrameworkComponent && FRAMEWORK_ATTRS.has(name)) {
       if (hasToken) {
@@ -638,6 +710,9 @@ function processAttributes(element, partList, tokenMap, type, isComponent, stati
 
     if (name.startsWith(':')) {
       const propName = name.slice(1).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+      // HTML sinks and event handler properties have no safe Part form; the
+      // same policy as `srcdoc` below applies before the Part is created.
+      assertSafePropertyBinding(propName, element);
       const segments = parseSegments(value, tokenMap);
       element.removeAttribute(name);
       if (hasDynamicSegments(segments)) {
@@ -700,18 +775,18 @@ function processAttributes(element, partList, tokenMap, type, isComponent, stati
 
 function compileSource(source, tokenMap, options = {}) {
   const type = options.type || 'html';
-  const forceFold = options.forceFold === true;
 
   const folded = options.foldedSource != null
     ? {foldedSource: options.foldedSource, modes: options.modes || new Map()}
-    : foldStaticTokens(source, tokenMap, {type, forceFold});
-  const {foldedSource} = folded;
+    : classifyTemplateSource(source, tokenMap);
+  const {foldedSource, modes} = folded;
   const template = document.createElement('template');
-  template.innerHTML = foldedSource;
+  template.innerHTML = trustedHTML(foldedSource);
 
   const compiled = new CompiledTemplate(template, {
     source: foldedSource,
     type,
+    modes,
   });
 
   let idCounter = 0;
@@ -742,9 +817,7 @@ function compileSource(source, tokenMap, options = {}) {
       const tag = el.tagName.toLowerCase();
 
       if (tag === 'template') {
-        if (hasDynamicContent(el)) {
-          throw new Error('Expressions inside a nested <template> are not supported');
-        }
+        validateInertTemplate(el);
         continue;
       }
 
@@ -753,8 +826,11 @@ function compileSource(source, tokenMap, options = {}) {
       const hasProp = el.hasAttribute('property');
       const hasRel = el.hasAttribute('rel');
       const hasAbout = el.hasAttribute('about');
-      const hasItems = el.hasAttribute('items');
-      const hasCondition = !hasItems && el.hasAttribute('condition');
+      // `items`/`condition` upgrade a *native* element into a semantic Loop/If.
+      // On a custom element they are ordinary attributes, so data cannot turn a
+      // user component into a framework component (and vice versa).
+      const hasItems = !hasDash && !hasIs && el.hasAttribute('items');
+      const hasCondition = !hasDash && !hasIs && !hasItems && el.hasAttribute('condition');
       const isComponent = hasDash || hasIs || hasProp || hasRel || hasAbout || hasItems || hasCondition;
 
       if (isComponent) {
@@ -762,7 +838,9 @@ function compileSource(source, tokenMap, options = {}) {
         const childCompiled = childSource.trim()
           ? compileSource(childSource, tokenMap, {type})
           : null;
-        const childLegacy = resolveTokensToLegacy(childSource, tokenMap, type);
+        const childLegacy = resolveTokensToLegacy(
+          childSource, tokenMap, type, childCompiled?.modes,
+        );
 
         // Child content is rendered by the child component. Keep the parent
         // template free of it, so parent parts never see child internals.
@@ -786,8 +864,10 @@ function compileSource(source, tokenMap, options = {}) {
         const staticAttrs = [];
         // Attribute names like `key`/`as`/`height` are framework config only on
         // Loop/If/Virtual; on a user component they are ordinary attributes.
+        const isAttr = el.getAttribute('is') || '';
         const isFrameworkComponent = hasItems || hasCondition ||
-          tag === 'veda-loop' || tag === 'veda-if' || tag === 'veda-virtual';
+          tag === 'veda-loop' || tag === 'veda-if' || tag === 'veda-virtual' ||
+          /-(loop|if)-component$/.test(isAttr);
         processAttributes(el, group.parts, tokenMap, type, true, staticAttrs, isFrameworkComponent);
 
         group.component = {
@@ -832,9 +912,12 @@ function shapeKey(values, type, modes) {
   const key = [type];
   for (let i = 0; i < values.length; i++) {
     const mode = modes.get(i);
-    key.push([i, mode, mode === 'folded' ? stringifyTagValue(values[i], type) : null]);
+    // Only a static-trusted value changes the compiled markup; it is part of
+    // the shape. Dynamic and spread values never do.
+    const staticText = mode === 'static' ? staticValueText(values[i]) : null;
+    key.push([i, mode, staticText]);
   }
-  // JSON keeps folded values unambiguous: a value containing `;` or `:` must
+  // JSON keeps static values unambiguous: a value containing `;` or `:` must
   // not be able to collide with a different shape and reuse its template.
   return JSON.stringify(key);
 }
@@ -858,7 +941,6 @@ export function compileTemplate(input) {
   if (isTemplateResult(input)) {
     const strings = input.strings;
     const type = input.type;
-    const forceFold = type === 'raw';
 
     // html('...') is a plain string: use the string cache instead of
     // compiling a fresh template for every call.
@@ -882,10 +964,14 @@ export function compileTemplate(input) {
       const built = buildTokenizedSource(strings, input.values);
       source = built.source;
       tokenMap = built.tokenMap;
-      const folded = foldStaticTokens(source, tokenMap, {type, forceFold});
-      modes = folded.modes;
-      foldedSource = folded.foldedSource;
-      if (canCache) sourceCache.set(strings, {type, source, modes});
+      const classified = classifyTemplateSource(source, tokenMap);
+      modes = classified.modes;
+      foldedSource = classified.foldedSource;
+      // A call site with an attribute-name position is classified per value,
+      // so only value-independent sources are cached here.
+      if (canCache && !classified.valueDependent) {
+        sourceCache.set(strings, {type, source, modes});
+      }
     }
 
     const shape = shapeKey(input.values, type, modes);
@@ -909,11 +995,10 @@ export function compileTemplate(input) {
     recordTemplateStat('compiles');
     if (!foldedSource) {
       tokenMap = new Map(input.values.map((value, index) => [index, value]));
-      foldedSource = foldStaticTokens(source, tokenMap, {type, forceFold}).foldedSource;
+      foldedSource = classifyTemplateSource(source, tokenMap).foldedSource;
     }
     const compiled = compileSource(source, tokenMap, {
       type,
-      forceFold,
       foldedSource,
       modes,
     });

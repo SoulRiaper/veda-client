@@ -6,31 +6,77 @@ Security guidelines for Veda Client Framework applications.
 
 ### Always Use `html` Template Tag
 
-The `html` template tag automatically escapes user input:
+`html` values are written through the DOM API; they are never parsed as
+markup. A `<script>` in a value becomes a text node:
 
 ```javascript
-import { html } from './src/components/Component.js';
+import { html } from 'veda-client';
 
-// ✅ SAFE - automatic escaping
+// ✅ SAFE - the value is a DOM value, not markup
 const userInput = '<script>alert("XSS")</script>';
 const template = html`<div>${userInput}</div>`;
-// Result: <div>&lt;script&gt;alert("XSS")&lt;/script&gt;</div>
+// <div> contains the literal text <script>alert("XSS")</script>
 ```
+
+### Values Never Become Markup
+
+This is the rule the template engine is built around (the same one lit-html
+uses): a `${}` value can only be text, an attribute value, a spread entry or a
+`ChildPart` value. It can never be a tag name, an attribute name, an
+`{expression}` or an attribute snippet. The only way to put a value into the
+template *source* is `unsafeStatic()`, which brands the value with a symbol so
+ordinary data (including `JSON.parse` output) cannot produce it.
+
+```javascript
+// ❌ no way to express this from data: tag names are authored
+html`<${this.state.tag}></${this.state.tag}>`;        // throws
+html`<div ${this.state.attr}="x"></div>`;             // throws (name position)
+html`<div ${this.state.snippet}></div>`;              // expects an object, not markup
+
+// ✅ trusted static source, authored in code
+const tag = unsafeStatic('my-row');
+html`<${tag}></${tag}>`;
+```
+
+Note: HTML entities in the *authored* template source are decoded by the parser
+before expression parsing, so `&#123;x&#125;` in a template behaves like
+`{x}`. That is authored code, not data; never build expression braces from
+entities or from strings.
+
+### Spread (`${attrs}`) Is a Capability Boundary
+
+`${attrs}` accepts an object (or `Map`) and applies it through `setAttribute`,
+`toggleAttribute`, property assignment or `addEventListener` — it is never
+parsed. Data may set ordinary attributes (`class`, `aria-*`, `data-*`, ...),
+but not:
+
+- `on*` content attributes (use `@event` with a function),
+- `srcdoc`, `innerHTML`, `outerHTML`,
+- framework attributes (`items`, `condition`, `key`, `as`, `item-key`,
+  `height`, `item-height`, `overscan`, `bind`, `ref`, `about`, `property`,
+  `rel`, `is`, `slot`),
+- the reserved `data-veda-*` namespace (compiler markers).
+
+`javascript:` and `vbscript:` URL values are refused in `href`, `src`,
+`action`, `formaction`, `poster` and similar attributes, including values
+written with `{expression}`. Other URLs (`https://`, relative, `mailto:`) are
+the application's responsibility, as in any framework.
 
 ### Never Use `raw` with User Input
 
-The `raw` function bypasses escaping and is **dangerous** with untrusted content:
+`raw` still returns a plain string that is compiled as template source, so a
+value containing `{...}` becomes an expression:
 
 ```javascript
-import { raw } from './src/components/Component.js';
+import { raw } from 'veda-client';
 
-// ❌ DANGEROUS - no escaping
+// ❌ DANGEROUS
 const userInput = '<script>alert("XSS")</script>';
 const template = raw`<div>${userInput}</div>`;
-// Result: <div><script>alert("XSS")</script></div> // Executed!
 ```
 
-**Rule:** Use `raw` only for content you control (templates, static HTML, sanitized HTML).
+**Rule:** Use `raw` only for content you control (templates, static HTML,
+sanitized HTML). Use `${}` inside `html` for values.
 
 ### Expression Injection Protection
 
@@ -190,9 +236,10 @@ the event fires. A method reference or a path to a function is expected:
 ```
 
 Call expressions are not evaluated as handlers: `{alert('XSS')}` does not run,
-the framework warns instead. Static inline handlers (`onclick="alert(1)"`)
-and `srcdoc` are compile errors in 4.0; use `{expression}` and
-`unsafeHTML()` respectively.
+the framework warns instead. Static inline handlers (`onclick="alert(1)"`), the
+`:onclick` property binding, `srcdoc` and `:srcdoc` are compile errors in 4.0;
+use `{expression}`, `@event` for spread listeners and `unsafeHTML()` for
+trusted markup.
 
 ### Data Attributes
 

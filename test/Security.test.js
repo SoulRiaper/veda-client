@@ -56,7 +56,7 @@ export default ({ test, assert }) => {
     cleanup();
   });
 
-  test('Security - html() escapes javascript: protocol', async () => {
+  test('Security - javascript: URLs are refused at write time', async () => {
     class ProtocolXSSComponent extends Component(HTMLElement) {
       constructor() {
         super();
@@ -69,13 +69,10 @@ export default ({ test, assert }) => {
 
     const { component, cleanup } = await createTestComponent(ProtocolXSSComponent);
 
-    // Link should be safe - the value is escaped so it's not a working link
-    const link = component.querySelector('a');
-    assert(link !== null, 'Link should exist');
-
-    // The href will be decoded by browser but won't execute because it's in attribute context
-    const href = link.getAttribute('href');
-    // Just check that link exists and won't execute (clicking won't run javascript)
+    // The engine refuses to write a script URL instead of escaping it into a
+    // value the browser would eventually execute.
+    assert(component.querySelector('a') === null, 'Link must not be rendered with a javascript: URL');
+    assert(!component.innerHTML.includes('javascript:'), 'Markup must not contain the script URL');
 
     cleanup();
   });

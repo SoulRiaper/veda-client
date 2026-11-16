@@ -169,10 +169,16 @@ render() → TemplateResult {strings, values}
 
 - `html` returns a `TemplateResult` object, not a String. Mount it with
   `render(result, container)` or from `Component.render()`.
+- A `${}` value never becomes markup: it is a text, attribute, property,
+  event or spread value written through the DOM API. Name positions accept
+  only authored names, Component classes or `unsafeStatic()`.
+- `${attrs}` applies an object of attributes through the DOM API; framework
+  attributes, `on*` content attributes, `srcdoc` and `javascript:` URLs are
+  refused.
 - `{}` expressions stay reactive and are compiled into Parts (text,
   attribute, property, event, ref, bind).
-- `${}` values are lazy template values. ChildParts use private text markers;
-  element Parts use `data-veda-element` markers and never rely on DOM paths.
+- ChildParts use random text markers; element Parts use a random marker
+  attribute and never rely on DOM paths, so data cannot forge or shift one.
 - On `update()` with the same template, the existing DOM tree and child
   components are reused and only changed Parts are written. Nested
   `TemplateResult` instances are reused too.

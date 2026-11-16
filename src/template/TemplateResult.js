@@ -27,6 +27,7 @@ export const nothing = Symbol.for('veda.nothing');
 export const noChange = Symbol.for('veda.noChange');
 
 const UNSAFE_HTML = Symbol.for('veda.unsafeHTML');
+const UNSAFE_STATIC = Symbol.for('veda.unsafeStatic');
 
 /**
  * Trusted markup. Use only with trusted content; values are inserted as DOM.
@@ -38,6 +39,26 @@ export function unsafeHTML(value) {
 
 export function isUnsafeHTML(value) {
   return Boolean(value && value[UNSAFE_HTML] === true);
+}
+
+/**
+ * Treat a string as part of the static template source, like lit-html's
+ * `unsafeStatic()`. The value is spliced into the template markup before it is
+ * parsed, so it may only be used with trusted content (never user input).
+ *
+ * The value is branded with a symbol so ordinary data - including anything that
+ * went through `JSON.parse` - can never be mistaken for a static value. This is
+ * the same approach as lit-html's `static.ts`; see TEMPLATE_ENGINE.md.
+ *
+ * @param {unknown} value
+ * @returns {{[key: symbol]: true, value: string}}
+ */
+export function unsafeStatic(value) {
+  return {[UNSAFE_STATIC]: true, value: value == null ? '' : String(value)};
+}
+
+export function isUnsafeStatic(value) {
+  return Boolean(value && value[UNSAFE_STATIC] === true);
 }
 
 export function safe(value) {

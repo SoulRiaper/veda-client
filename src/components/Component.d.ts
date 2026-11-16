@@ -27,7 +27,7 @@ export interface ComponentInstance<M extends Model = Model> {
   pre(): void | Promise<void>;
   render(): string | TemplateResult | CompiledTemplate |
     Promise<string | TemplateResult | CompiledTemplate> | undefined;
-  post(fragment?: DocumentFragment): void | Promise<void>;
+  post(): void | Promise<void>;
   removed(): void | Promise<void>;
 
   update(): Promise<void>;

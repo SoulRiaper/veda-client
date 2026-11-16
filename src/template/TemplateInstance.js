@@ -1,9 +1,13 @@
 import {effect} from '../Effect.js';
 import {toRaw} from '../Reactive.js';
 import ExpressionParser from '../components/ExpressionParser.js';
-import {isTemplateResult, isUnsafeHTML, nothing, noChange} from './TemplateResult.js';
+import {isTemplateResult, isUnsafeHTML, isUnsafeStatic, nothing, noChange} from './TemplateResult.js';
 import {compileTemplate} from './Template.js';
 import {ELEMENT_MARKER, TEXT_MARKER_RE} from './markers.js';
+import {
+  EVENT_NAME_RE, assertSafeDataAttributeName, assertSafeDataPropertyName,
+  assertSafeUrlValue, describeValue,
+} from './security.js';
 import {factories} from './factories.js';
 import {recordComponentTag, recordInstanceHost, recordTemplateStat} from './stats.js';
 
@@ -99,6 +103,8 @@ function assignExprPath(context, expr, value) {
 
 function segmentValueText(value, type = 'text') {
   if (value == null || value === nothing) return '';
+  // A static-trusted value used in a value position is still just a string.
+  if (isUnsafeStatic(value)) return String(value.value ?? '');
   if (isTemplateResult(value)) {
     return type === 'attribute' ? String(value) : '';
   }
@@ -352,8 +358,18 @@ class ChildPart {
     }
     for (const node of this.#nodes) node.remove?.();
     this.#nodes = [];
-    for (const nested of this.#nestedList()) nested.destroy();
+    for (const nested of this.#nestedList()) {
+      // A nested instance may have inserted top-level nodes after it was
+      // created; remove those before the static roots captured at mount time
+      // are dropped, otherwise they become orphaned DOM.
+      nested.clearRendered?.();
+      nested.destroy();
+    }
     this.#nested = null;
+  }
+
+  clearRendered() {
+    this.#clearStructured();
   }
 
   #clear() {
@@ -477,6 +493,8 @@ class AttributePart {
       return;
     }
 
+    assertSafeUrlValue(attrName.toLowerCase(), value);
+
     if (shouldUseProperty) {
       if (node[attrName] !== value) {
         recordTemplateStat('domWrites');
@@ -529,6 +547,7 @@ class PropertyPart {
       const code = this.segments[0].code;
       const value = this.#evaluatePropertyValue(code);
       if (value === noChange) return;
+      if (typeof value === 'string') assertSafeUrlValue(this.name.toLowerCase(), value);
       if (rawTarget[this.name] !== value) {
         recordTemplateStat('domWrites');
         this.target[this.name] = value === nothing ? '' : value;
@@ -540,6 +559,7 @@ class PropertyPart {
       this.segments, this.context, this.values, 'property'
     );
     if (skip) return;
+    assertSafeUrlValue(this.name.toLowerCase(), text);
     if (rawTarget[this.name] !== text) {
       recordTemplateStat('domWrites');
       this.target[this.name] = text;
@@ -559,6 +579,189 @@ class PropertyPart {
   destroy() {
     this.#stop?.();
     this.#stop = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AttributesPart (`${attrs}`)
+// ---------------------------------------------------------------------------
+
+const SPREAD_ATTRIBUTE = 'attribute';
+const SPREAD_BOOLEAN = 'boolean';
+const SPREAD_PROPERTY = 'property';
+const SPREAD_EVENT = 'event';
+
+function spreadValueText(value) {
+  if (value == null) return '';
+  if (Array.isArray(value)) return value.join(' ');
+  if (isUnsafeStatic(value)) return String(value.value ?? '');
+  if (isUnsafeHTML(value)) return String(value.value ?? '');
+  if (typeof value === 'object') {
+    throw new TypeError(
+      `A ${'${attrs}'} attribute value must be a primitive, got ${describeValue(value)}`,
+    );
+  }
+  return String(value);
+}
+
+function spreadEntries(value) {
+  if (value == null) return [];
+  if (value instanceof Map) return Array.from(value.entries());
+  if (typeof value === 'object') {
+    if (Array.isArray(value)) {
+      return value.flatMap((entry) => spreadEntries(entry));
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (proto === Object.prototype || proto === null) {
+      return Object.entries(value);
+    }
+  }
+  // Strings used to be parsed as markup here. That is exactly the hole the
+  // engine closed: a spread value is data, and data never becomes markup.
+  throw new TypeError(
+    `\${attrs} expects an object of attributes (or a Map), got ${describeValue(value)}. ` +
+    'Markup is not parsed from values; use unsafeHTML() for trusted markup.',
+  );
+}
+
+/**
+ * Applies an attribute object (`${attrs}`) through the DOM API.
+ *
+ * The part owns the names it wrote: keys that disappear are removed on the
+ * next update. Names that only the framework may author (`items`, `ref`,
+ * `about`, ...), event handler content attributes, `srcdoc` and `javascript:`
+ * URLs are rejected, so a data-driven spread cannot create a capability or a
+ * code-execution sink.
+ */
+class AttributesPart {
+  #applied = new Map();
+  #values;
+
+  constructor(element, descriptor, context, host, values) {
+    this.element = element;
+    this.context = context;
+    this.host = host;
+    this.valueIndex = descriptor.valueIndex;
+    this.#values = values || [];
+    this.setValues(this.#values);
+  }
+
+  setValues(values) {
+    this.#values = values || [];
+    this.commit();
+  }
+
+  commit() {
+    const next = new Map();
+    for (const [rawName, value] of spreadEntries(this.#values?.[this.valueIndex])) {
+      next.set(rawName, value);
+    }
+
+    for (const rawName of Array.from(this.#applied.keys())) {
+      if (!next.has(rawName)) this.#remove(rawName);
+    }
+
+    for (const [rawName, value] of next) this.#set(rawName, value);
+  }
+
+  #parseName(rawName) {
+    if (typeof rawName !== 'string' || rawName === '') {
+      throw new TypeError(`Invalid attribute slot ${JSON.stringify(rawName)} in a \${attrs} value`);
+    }
+    if (rawName.startsWith('?')) return {kind: SPREAD_BOOLEAN, name: rawName.slice(1)};
+    if (rawName.startsWith('.')) return {kind: SPREAD_PROPERTY, name: rawName.slice(1)};
+    if (rawName.startsWith('@')) return {kind: SPREAD_EVENT, name: rawName.slice(1)};
+    return {kind: SPREAD_ATTRIBUTE, name: rawName};
+  }
+
+  #set(rawName, value) {
+    const {kind, name} = this.#parseName(rawName);
+    const previous = this.#applied.get(rawName);
+    if (previous && previous.kind !== kind) this.#remove(rawName);
+
+    if (kind === SPREAD_EVENT) {
+      if (!EVENT_NAME_RE.test(name)) {
+        throw new Error(`Invalid event name "@${name}" in a \${attrs} value`);
+      }
+      if (typeof value !== 'function') {
+        throw new Error(`The "@${name}" spread listener must be a function, got ${describeValue(value)}`);
+      }
+      if (previous?.value !== value) {
+        if (previous?.value) this.element.removeEventListener(name, previous.value);
+        this.element.addEventListener(name, value);
+      }
+      this.#applied.set(rawName, {kind, name, value});
+      return;
+    }
+
+    if (kind === SPREAD_PROPERTY) {
+      // Properties are set on the element itself, never on component state:
+      // data may decorate a node, but it may not reach into a component.
+      assertSafeDataPropertyName(name);
+      assertSafeUrlValue(name.toLowerCase(), value);
+      if (this.element[name] !== value) {
+        recordTemplateStat('domWrites');
+        this.element[name] = value;
+      }
+      this.#applied.set(rawName, {kind, name, value});
+      return;
+    }
+
+    assertSafeDataAttributeName(name);
+
+    if (kind === SPREAD_BOOLEAN) {
+      const on = value !== false && value != null && value !== 'false';
+      if (this.element.hasAttribute(name) !== on) {
+        recordTemplateStat('domWrites');
+        this.element.toggleAttribute(name, on);
+      }
+      this.#applied.set(rawName, {kind, name, value});
+      return;
+    }
+
+    if (value == null || value === false) {
+      this.#remove(rawName);
+      return;
+    }
+
+    assertSafeUrlValue(name.toLowerCase(), value);
+    const text = value === true ? '' : spreadValueText(value);
+    if (this.element.getAttribute(name) !== text) {
+      recordTemplateStat('domWrites');
+      this.element.setAttribute(name, text);
+    }
+    this.#applied.set(rawName, {kind, name, value});
+  }
+
+  #remove(rawName) {
+    const entry = this.#applied.get(rawName);
+    if (!entry) return;
+    this.#applied.delete(rawName);
+    if (entry.kind === SPREAD_EVENT) {
+      if (entry.value) this.element.removeEventListener(entry.name, entry.value);
+      return;
+    }
+    if (entry.kind === SPREAD_PROPERTY) return;
+    if (entry.kind === SPREAD_BOOLEAN) {
+      this.element.toggleAttribute(entry.name, false);
+      return;
+    }
+    this.element.removeAttribute(entry.name);
+  }
+
+  listenerCount() {
+    let count = 0;
+    for (const entry of this.#applied.values()) {
+      if (entry.kind === SPREAD_EVENT) count += 1;
+    }
+    return count;
+  }
+
+  destroy() {
+    for (const rawName of Array.from(this.#applied.keys())) {
+      if (this.#applied.get(rawName)?.kind === SPREAD_EVENT) this.#remove(rawName);
+    }
+    this.#applied.clear();
   }
 }
 
@@ -807,10 +1010,16 @@ function createComponentElement(descriptor, context, host, instance) {
 
 function collectMarkers(fragment) {
   const elements = new Map();
+  const duplicates = new Set();
   for (const element of fragment.querySelectorAll(`[${ELEMENT_MARKER}]`)) {
     const id = Number(element.getAttribute(ELEMENT_MARKER));
     element.removeAttribute(ELEMENT_MARKER);
-    if (id) elements.set(id, element);
+    if (!id) continue;
+    // Two markers with the same id mean the compiled template is corrupt. The
+    // marker name is randomized, so this can only be a compiler bug - fail
+    // loudly instead of binding Parts to the wrong element.
+    if (elements.has(id)) duplicates.add(id);
+    elements.set(id, element);
   }
 
   const children = new Map();
@@ -820,9 +1029,18 @@ function collectMarkers(fragment) {
     const match = TEXT_MARKER_RE.exec(node.nodeValue);
     if (match) {
       node.nodeValue = '';
-      children.set(Number(match[1]), node);
+      const id = Number(match[1]);
+      if (children.has(id)) duplicates.add(id);
+      children.set(id, node);
     }
     node = walker.nextNode();
+  }
+
+  if (duplicates.size) {
+    throw new Error(
+      `Template marker collision for part(s) ${[...duplicates].join(', ')}; ` +
+      'the compiled template is corrupt',
+    );
   }
   return {elements, children};
 }
@@ -831,6 +1049,8 @@ function createElementPart(element, descriptor, context, host, values) {
   switch (descriptor.type) {
     case 'attribute':
       return new AttributePart(element, descriptor, context, host, values);
+    case 'spread':
+      return new AttributesPart(element, descriptor, context, host, values);
     case 'property':
       return new PropertyPart(element, descriptor, context, host, values);
     case 'event':
@@ -928,6 +1148,10 @@ export default class TemplateInstance {
       if (typeof part.listenerCount === 'function') count += part.listenerCount();
     }
     return count;
+  }
+
+  clearRendered() {
+    for (const part of this.parts) part.clearRendered?.();
   }
 
   destroy() {
