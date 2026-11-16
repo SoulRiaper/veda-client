@@ -249,11 +249,12 @@ this.state.todos = [...this.state.todos]; // Single trigger
 
 ## Security Limitations
 
-In the marker engine `${}` is text/attribute data, never markup. `safe()`
-remains available for application code that builds strings by hand, but the
-engine no longer serializes templates into strings. The Slot fallback for hosts
-without a compiled template parses author content as a string: `${}` there is
-baked into markup and bypasses the URL policy, so do not pass untrusted values.
+In the marker engine `${}` is text/attribute data, never markup; this covers
+components, loops, conditionals, slots and virtualized lists. `safe()` remains
+available for application code that builds strings by hand, but the engine no
+longer serializes templates into strings and has no string fallback. A host
+component assembled outside a template (`innerHTML`) has no compiled source, so
+Slot cannot project its author content — author such hosts with `html`.
 Details and the full policy: [SECURITY.md](./SECURITY.md).
 
 ---

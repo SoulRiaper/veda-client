@@ -18,6 +18,11 @@ _Prepared as 4.0.0. Not merged to `master` yet._
 - Declaratively created components no longer receive a baked `template` string;
   their author content lives in `_compiledTemplate`/`_templateSource`. A custom
   `render()` that reads `this.template` must switch to returning an `html` template literal.
+- `Slot` no longer re-parses a host's `template`/`innerHTML` string and no longer
+  projects hosts that were assembled outside a template. Author such hosts with
+  `html`; everything projected now comes from the host's compiled template.
+- All `innerHTML` writes in the engine (compiler, `Slot`, `unsafeHTML()`) go
+  through the `veda-template` Trusted Types policy; there is no direct sink left.
 - Values never become markup: `${}` is a text/attribute/spread value. Tag and
   attribute names require an authored name, a Component class with its own
   `static tag`, or `unsafeStatic()`; everything else throws.

@@ -66,16 +66,6 @@ The guard lives in the Part writer, so it covers every value the marker engine
 renders — including `${}` projected through `Slot` when the host content comes
 from a compiled parent template.
 
-### Legacy String Paths Are the Exception
-
-The Slot fallback handles hosts without a compiled template — components whose
-author content was written directly into the DOM (`innerHTML`) instead of a
-`html` template. It parses that content as a string, so `${}` there is baked
-into markup at compile time and does **not** get the value/URL guarantee. Do not
-pass untrusted values through this path; use `{expression}`, a child component
-or the marker engine. `Virtual` now renders through the marker engine and is
-covered by the policy. The rest of this document describes the marker engine.
-
 ### Never Use `raw` with User Input
 
 `raw` still returns a plain string that is compiled as template source, so a

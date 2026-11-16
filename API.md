@@ -1421,9 +1421,9 @@ render(view('Ada'), document.querySelector('#app'));
   `srcdoc`, and `:srcdoc`/`:on*`/`:innerHTML`/`:outerHTML` are compile errors.
 - Script URLs (`javascript:`/`vbscript:`) are refused for URL attributes.
 
-Slotted `${}` values use the same compiler and policy; only the Slot fallback
-for hosts without a compiled template is a legacy string path — see
-[SECURITY.md](./SECURITY.md#legacy-string-paths-are-the-exception).
+Slotted `${}` values use the same compiler and policy: Slot projects a pruned
+clone of the host's compiled template, not a re-parsed string. A host assembled
+outside a template has no compiled source and cannot be projected.
 Engine details and limitations — [TEMPLATE_ENGINE.md](./TEMPLATE_ENGINE.md).
 
 ### Effect Cleanup Timing
