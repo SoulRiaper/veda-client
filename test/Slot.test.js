@@ -692,4 +692,26 @@ export default ({test, assert}) => {
     cleanup();
   });
 
+
+  test('Slot - a host without a compiled template is not projected', async () => {
+    class HandBuiltHost extends Component(HTMLElement) {
+      constructor() {
+        super();
+        // A host assembled outside a template has no compiled source; Slot can
+        // only project compiled author content, so its fallback is rendered.
+        this.template = '<span slot="default" class="hand-built">author</span>';
+      }
+      render() {
+        return html`<div class="hand-built-layout"><${Slot}>fallback</${Slot}></div>`;
+      }
+    }
+    const { component, cleanup } = await createTestComponent(HandBuiltHost);
+    await component.rendered;
+
+    assert(component.querySelector('.hand-built') === null, 'String-authored content must not be projected');
+    assert(component.querySelector('.hand-built-layout').textContent.trim() === 'fallback',
+      'The Slot fallback should render when the host has no compiled template');
+    cleanup();
+  });
+
 };

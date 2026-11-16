@@ -1,6 +1,36 @@
 import Component from './Component.js';
 import {toRaw} from '../Reactive.js';
-import {compileTemplate, compileTemplateWithValues, resolveSourceTokens} from '../template/Template.js';
+import {CompiledTemplate, compileTemplate} from '../template/Template.js';
+import {ELEMENT_MARKER} from '../template/markers.js';
+
+/**
+ * Resolve the `slot` attribute of a top-level projected element.
+ *
+ * A static slot name is still present in the compiled template. A `${}` name
+ * became an AttributePart, so its value is evaluated from the part segments
+ * (static text and `${}` values only; `{expr}` in a slot name is unsupported).
+ */
+function slotNameOf(element, compiled, values) {
+  const marker = element.getAttribute(ELEMENT_MARKER);
+  const group = marker
+    ? compiled.elements.find(entry => String(entry.id) === marker)
+    : null;
+  const part = group?.parts.find(entry => entry.type === 'attribute' && entry.name === 'slot');
+  if (!part) return element.getAttribute('slot') || 'default';
+
+  let text = '';
+  for (const segment of part.segments) {
+    if (segment.type === 'static') {
+      text += segment.value;
+    } else if (segment.type === 'value') {
+      const value = values?.[segment.index];
+      text += value == null ? '' : String(value);
+    } else {
+      return null;
+    }
+  }
+  return text;
+}
 
 const MAX_TREE_DEPTH = 20;
 
@@ -126,12 +156,7 @@ export default function SlotComponent(Class = HTMLElement) {
 
       this._vedaRefsTarget = this.#refsOwner(evalContext, host);
       try {
-        let compiled = projection.compiled;
-        if (!compiled) {
-          compiled = projection.hasProjected
-            ? compileTemplateWithValues(projection.markup, values)
-            : compileTemplate(projection.markup);
-        }
+        const compiled = projection.compiled || compileTemplate(projection.markup || '');
         const instance = compiled.instantiate(
           evalContext,
           this,
@@ -166,36 +191,57 @@ export default function SlotComponent(Class = HTMLElement) {
     }
 
     #buildProjection(host, name) {
-      // Prefer the raw author source, which still carries `${}` tokens: it is
-      // compiled with the host values below, so values stay values. A host
-      // without a compiled source (authored directly in the DOM, or created by
-      // the legacy Virtual path) falls back to its baked template string.
-      const source = host._templateSource ?? host.template;
+      // Author content is already compiled by the parent template. Project a
+      // pruned clone of that compiled tree instead of re-parsing strings: the
+      // Parts and markers stay intact, `${}` stays a value, and no innerHTML
+      // sink is involved.
       const values = host._templateValues || [];
-      const tpl = document.createElement('template');
-      tpl.innerHTML = source || '';
+      const hostCompiled = host._compiledTemplate;
 
-      const fragment = document.createDocumentFragment();
-      let hasProjectedContent = false;
+      if (hostCompiled) {
+        const template = document.createElement('template');
+        template.content.appendChild(hostCompiled.template.content.cloneNode(true));
 
-      for (const child of [...tpl.content.childNodes]) {
-        if (child.nodeType === Node.TEXT_NODE) {
-          if (name !== 'default' || !child.nodeValue.trim()) continue;
-          fragment.appendChild(child.cloneNode(true));
-          hasProjectedContent = true;
-          continue;
+        const original = [...template.content.childNodes];
+        const kept = [];
+        for (const child of original) {
+          if (child.nodeType === Node.TEXT_NODE) {
+            if (name !== 'default' || !child.nodeValue.trim()) continue;
+            kept.push(child);
+            continue;
+          }
+          if (child.nodeType !== Node.ELEMENT_NODE) continue;
+          // Slot names may be static or `${}` values; either way they are only
+          // used for matching and dropped from the projection.
+          const slotName = slotNameOf(child, hostCompiled, values);
+          if (slotName === null || slotName !== name) continue;
+          child.removeAttribute('slot');
+          kept.push(child);
         }
-        if (child.nodeType !== Node.ELEMENT_NODE) continue;
-        // A `${}` in the slot attribute is a value, not markup: resolve it for
-        // matching only, then drop the attribute from the projected clone.
-        const slotName = resolveSourceTokens(child.getAttribute('slot') || 'default', values);
-        if (slotName !== name) continue;
-        child.removeAttribute('slot');
-        fragment.appendChild(child.cloneNode(true));
-        hasProjectedContent = true;
+
+        if (kept.length) {
+          const keep = new Set(kept);
+          for (const child of original) {
+            if (!keep.has(child)) child.remove();
+          }
+
+          const compiled = new CompiledTemplate(template, {
+            source: hostCompiled.source,
+            type: hostCompiled.type,
+            modes: hostCompiled.modes,
+          });
+          // The pruned template keeps the markers of the kept subtree, so the
+          // original descriptors resolve against it; descriptors for removed
+          // nodes are skipped by TemplateInstance.
+          compiled.elements = hostCompiled.elements;
+          compiled.childParts = hostCompiled.childParts;
+
+          const signature = kept.map(child => original.indexOf(child)).join(',');
+          return {compiled, hasProjected: true, key: `p|${signature}`};
+        }
       }
 
-      if (!hasProjectedContent && (this._compiledTemplate || this.template)) {
+      if (this._compiledTemplate || this.template) {
         return {
           compiled: this._compiledTemplate || null,
           markup: this.template || '',
@@ -204,10 +250,7 @@ export default function SlotComponent(Class = HTMLElement) {
         };
       }
 
-      const wrapper = document.createElement('template');
-      wrapper.content.appendChild(fragment);
-      const markup = wrapper.innerHTML;
-      return {compiled: null, markup, key: markup, hasProjected: hasProjectedContent};
+      return {compiled: null, markup: '', key: '', hasProjected: false};
     }
 
     // A forwarded outlet is cloned into the inner component, so its DOM parent

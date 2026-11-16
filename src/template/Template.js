@@ -18,7 +18,6 @@ export const TEMPLATE_ENGINE = 'templateresult-parts-v3';
 export const TOKEN_SUFFIX = '\uE001';
 
 const TOKEN_AT_START = new RegExp(`^${TOKEN_PREFIX}(\\d+)${TOKEN_SUFFIX}`);
-const TOKEN_GLOBAL = new RegExp(`${TOKEN_PREFIX}(\\d+)${TOKEN_SUFFIX}`, 'g');
 
 // A marker attribute groups every Part that belongs to one element. It is
 // generated at compile time and removed when the instance resolves the Part.
@@ -36,7 +35,7 @@ const templatePolicy = trustedTypes?.createPolicy?.('veda-template', {
   createHTML: (source) => source,
 });
 
-function trustedHTML(source) {
+export function trustedHTML(source) {
   return templatePolicy ? templatePolicy.createHTML(source) : source;
 }
 
@@ -525,28 +524,6 @@ function classifyTemplateSource(source, tokenMap) {
   return {foldedSource: out, modes, valueDependent};
 }
 
-/**
- * Resolve `${}` tokens in a plain string (for example the `slot` attribute of
- * projected content) against the values of the owning call-site.
- *
- * Unlike the legacy path this does not serialize markup: the result is only
- * used for matching, never inserted into the DOM.
- *
- * @internal
- * @param {string} text
- * @param {readonly unknown[]} [values]
- * @returns {string}
- */
-export function resolveSourceTokens(text, values = []) {
-  if (typeof text !== 'string' || !text.includes(TOKEN_PREFIX)) return text;
-  TOKEN_GLOBAL.lastIndex = 0;
-  return text.replace(TOKEN_GLOBAL, (_, rawIndex) => {
-    const value = values[Number(rawIndex)];
-    if (value == null || value === nothing) return '';
-    return String(value);
-  });
-}
-
 const EXPR_OPEN = '{';
 const EXPR_CLOSE = '}';
 
@@ -856,7 +833,7 @@ function compileSource(source, tokenMap, options = {}) {
           : null;
         // Child content is rendered by the child component. Keep the parent
         // template free of it, so parent parts never see child internals.
-        el.innerHTML = '';
+        el.innerHTML = trustedHTML('');
 
         const kind = hasDash
           ? 'custom'
@@ -1038,32 +1015,6 @@ export function compileTemplate(input) {
   stringCache.set(stringSource, compiled);
   trimCache(stringCache, MAX_STRING_CACHE);
   return compiled;
-}
-
-/**
- * Compile a raw template source that still contains internal `${}` tokens.
- *
- * Slot projection needs to render author content that came from a compiled
- * parent template. The source keeps its tokens and the values belong to the
- * parent call-site, so the content is compiled with those values instead of
- * being baked into a markup string: `${}` stays a value (text, attribute or
- * spread), and the URL/attribute policy applies as usual.
- *
- * @internal
- * @param {string} source
- * @param {readonly unknown[]} [values]
- * @returns {CompiledTemplate}
- */
-export function compileTemplateWithValues(source, values = []) {
-  const text = typeof source === 'string' ? source : String(source ?? '');
-  const tokenMap = new Map();
-  for (let index = 0; index < values.length; index++) tokenMap.set(index, values[index]);
-  const classified = classifyTemplateSource(text, tokenMap);
-  return compileSource(text, tokenMap, {
-    type: 'html',
-    foldedSource: classified.foldedSource,
-    modes: classified.modes,
-  });
 }
 
 export function clearTemplateCache() {

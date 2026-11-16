@@ -41,22 +41,9 @@ export class CompiledTemplate {
 }
 
 export const TEMPLATE_ENGINE: string;
+/** @internal Route a trusted markup string through the `veda-template` policy. */
+export function trustedHTML(source: string): string;
 export function compileTemplate(input: TemplateResult | CompiledTemplate | string | null | undefined): CompiledTemplate;
-/**
- * Compile a raw source that still contains internal `${}` tokens with the
- * values of the owning call-site. Used by Slot projection.
- * @internal
- */
-export function compileTemplateWithValues(
-  source: string,
-  values?: readonly unknown[],
-): CompiledTemplate;
-/**
- * Resolve `${}` tokens in a plain string (for example a `slot` attribute)
- * without serializing markup. Used by Slot projection.
- * @internal
- */
-export function resolveSourceTokens(text: string, values?: readonly unknown[]): string;
 export function render(
   result: TemplateResult | CompiledTemplate | string | null | undefined,
   container: Element | DocumentFragment | ShadowRoot,

@@ -1134,4 +1134,25 @@ export default ({test, assert}) => {
   });
 
 
+
+  test('Trusted Types - template compilation uses the veda-template policy', async () => {
+    const policies = [];
+    const previous = globalThis.trustedTypes;
+    globalThis.trustedTypes = {
+      createPolicy(name) {
+        policies.push(name);
+        return {createHTML: (source) => source};
+      },
+    };
+    try {
+      // A fresh module instance so the policy is created under the stub above.
+      const mod = await import(`../src/template/Template.js?trusted-types=${Date.now()}`);
+      mod.compileTemplate('<div class="tt">x</div>');
+      assert(policies.includes('veda-template'), 'Compilation should create and use the veda-template policy');
+    } finally {
+      if (previous === undefined) delete globalThis.trustedTypes;
+      else globalThis.trustedTypes = previous;
+    }
+  });
+
 };

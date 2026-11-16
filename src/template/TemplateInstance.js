@@ -2,7 +2,7 @@ import {effect} from '../Effect.js';
 import {toRaw} from '../Reactive.js';
 import ExpressionParser from '../components/ExpressionParser.js';
 import {isTemplateResult, isUnsafeHTML, isUnsafeStatic, nothing, noChange} from './TemplateResult.js';
-import {compileTemplate} from './Template.js';
+import {compileTemplate, trustedHTML} from './Template.js';
 import {ELEMENT_MARKER, TEXT_MARKER_RE} from './markers.js';
 import {
   EVENT_NAME_RE, assertSafeDataAttributeName, assertSafeDataPropertyName,
@@ -280,7 +280,7 @@ class ChildPart {
   #renderUnsafeHTML(value) {
     this.#clear();
     const template = document.createElement('template');
-    template.innerHTML = String(value.value ?? '');
+    template.innerHTML = trustedHTML(String(value.value ?? ''));
     const nodes = Array.from(template.content.childNodes);
     this.#insertBefore(nodes);
     this.#nodes = nodes;
@@ -314,7 +314,7 @@ class ChildPart {
       if (isUnsafeHTML(item)) {
         flushText();
         const template = document.createElement('template');
-        template.innerHTML = String(item.value ?? '');
+        template.innerHTML = trustedHTML(String(item.value ?? ''));
         nodes.push(...Array.from(template.content.childNodes));
         return;
       }
