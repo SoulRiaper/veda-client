@@ -49,6 +49,7 @@ class MyComponent extends Component(HTMLElement) {
   - [Two-way bind](#two-way-bind)
 - [Reactivity](#reactivity)
 - [Reactivity Edge Cases](#reactivity-edge-cases)
+- [Template API](#template-api)
 - [Built-in Components](#built-in-components)
   - [Loop](#loop)
   - [If](#if)
@@ -1398,34 +1399,6 @@ class MyComponent extends Component(HTMLElement) {
 }
 ```
 
-### Template API (breaking)
-
-```js
-import {html, render, unsafeStatic, unsafeHTML, nothing, noChange} from 'veda-client';
-
-const view = (name) => html`<div class="greeting">${name}</div>`;
-render(view('Ada'), document.querySelector('#app'));
-```
-
-- `html` returns a `TemplateResult` object, not a String; use `render()` or
-  return it from `Component.render()`.
-- A value never becomes markup in the marker engine: `${}` is text, an
-  attribute value or a spread entry. Tag/attribute names need an authored
-  name, a Component class with its own `static tag`, or `unsafeStatic()`.
-- `${attrs}` takes an object/`Map` (`name`, `?bool`, `.prop`, `@event`);
-  strings are rejected. Data cannot set `on*`, `srcdoc`, `innerHTML`, framework
-  attributes or `data-veda-*`.
-- `nothing` removes the value at that position, `noChange` keeps the previous
-  one, `unsafeHTML()` renders trusted markup.
-- `${}` in `<script>`/`<style>`/comments/nested `<template>`, static `on*` or
-  `srcdoc`, and `:srcdoc`/`:on*`/`:innerHTML`/`:outerHTML` are compile errors.
-- Script URLs (`javascript:`/`vbscript:`) are refused for URL attributes.
-
-Slotted `${}` values use the same compiler and policy: Slot projects a pruned
-clone of the host's compiled template, not a re-parsed string. A host assembled
-outside a template has no compiled source and cannot be projected.
-Engine details and limitations — [TEMPLATE_ENGINE.md](./TEMPLATE_ENGINE.md).
-
 ### Effect Cleanup Timing
 
 Effects are cleaned up automatically but timing matters:
@@ -1524,6 +1497,87 @@ console.log(date instanceof Date); // false ❌
 - `Promise`
 - `null`/`undefined`
 - Primitives (numbers, strings, booleans)
+
+---
+
+## Template API
+
+The 4.0 template engine is exposed through the exports below. `html` returns a
+`TemplateResult`; mount it with `render()` or return it from
+`Component.render()`. Engine internals and limitations are described in
+[TEMPLATE_ENGINE.md](./TEMPLATE_ENGINE.md).
+
+```js
+import {
+  html, render, TemplateResult, nothing, noChange,
+  unsafeHTML, unsafeStatic,
+  getTemplateCacheStats, resetTemplateStats, clearTemplateCache, TEMPLATE_ENGINE,
+} from 'veda-client';
+
+const view = (name) => html`<div class="greeting">${name}</div>`;
+render(view('Ada'), document.querySelector('#app'));
+```
+
+### `html(strings, ...values): TemplateResult`
+
+Tagged template that builds a compiled-template value. `html('...')` called as
+a plain function is still accepted and compiled as trusted template source, but
+it cannot take `${}` values.
+
+A value never becomes markup in the marker engine: `${}` is text, an attribute
+value or a spread entry. Tag and attribute names need an authored name, a
+Component class with its own `static tag`, or `unsafeStatic()`.
+
+- `${attrs}` takes an object/`Map` (`name`, `?bool`, `.prop`, `@event`);
+  strings are rejected. Data cannot set `on*`, `srcdoc`, `innerHTML`, framework
+  attributes or `data-veda-*`.
+- `${}` in `<script>`/`<style>`/comments/nested `<template>`, static `on*` or
+  `srcdoc`, and `:srcdoc`/`:on*`/`:innerHTML`/`:outerHTML` are compile errors.
+- Script URLs (`javascript:`/`vbscript:`) are refused for URL attributes.
+
+### `render(result, container): TemplateInstance | null`
+
+Mounts or patches `result` in `container` (`Element`, `DocumentFragment` or
+`ShadowRoot`). When the same compiled template is rendered again, the existing
+DOM is patched in place. `nothing`/`null` unmounts and clears the container;
+`noChange` keeps the current content. The return value is an internal instance
+(not part of the public contract) or `null`.
+
+### `TemplateResult`
+
+The value returned by `html`. Exposes `strings`, `values` and `type`
+(`'html' | 'raw'`). It is not a `String` and has no string serialization:
+`String(result)` does not produce markup and `TemplateResult.toString()` was
+removed in 4.0.
+
+### Sentinels and trusted values
+
+- `nothing` — render nothing at this position (clears the previous value).
+- `noChange` — keep the previous value of this Part.
+- `unsafeHTML(value)` — insert trusted markup as DOM. Use only for trusted or
+  sanitized content; `isUnsafeHTML(value)` identifies the wrapper.
+- `unsafeStatic(value)` — splice a trusted string into the template source
+  (tag names, attribute names). Use only for authored code, never user data;
+  `isUnsafeStatic(value)` identifies the wrapper.
+
+### Template cache
+
+- `clearTemplateCache()` — clears compiled-template, call-site and expression
+  caches. Use between tests or after HMR.
+- `getTemplateCacheStats(): {engine: string, stringCacheSize: number}` —
+  deprecated diagnostics; per-host/per-tag counters were removed in 4.0.
+- `resetTemplateStats()` — deprecated no-op kept for compatibility; use
+  `clearTemplateCache()` to reset caches.
+- `TEMPLATE_ENGINE` — engine marker string, currently
+  `'templateresult-parts-v3'` (also exposed as
+  `window.__VEDA_TEMPLATE_ENGINE__` in the browser).
+
+### Slots
+
+Slotted `${}` values use the same compiler and policy: `Slot` projects a pruned
+clone of the host's compiled template rather than a re-parsed string. A host
+assembled outside a template with direct DOM (`innerHTML`) has no compiled
+source and is not projected; author such hosts with `html`.
 
 ---
 
