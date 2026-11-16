@@ -318,7 +318,7 @@
 
 ### Core Optimizations
 - [x] **LIS reconciliation in Loop** - O(n log n) reordering
-- [x] **Virtual component** - renders only visible items (legacy path; not migrated to marker engine yet)
+- [x] **Virtual component** - renders only visible items through the marker engine (compiled templates)
 - [ ] **Concurrent mode** (if needed)
 
 ### Developer Experience
@@ -336,9 +336,9 @@
 
 ## 🚧 Current Status
 
-**Current Branch:** `feat/template-result-parts` (4.0.0 release candidate: marker-based template engine)
+**Current Branch:** `refactor/template-legacy-cleanup` (4.0.0 release candidate: marker-based template engine)
 
-**Status:** 3.0.0 released; 4.0.0 is in progress on the branch above.
+**Status:** 3.0.0 released; 4.0.0 is in a release candidate on the branch above.
 
 **Completed:**
 1. ✅ ROADMAP.md created and maintained
@@ -376,5 +376,5 @@ To contribute:
 
 **Last updated:** November 2026
 **Version:** 4.0.0
-**Status:** 3.0.0 released; 4.0.0 release candidate on `feat/template-result-parts` (not merged or tagged yet)
+**Status:** 3.0.0 released; 4.0.0 release candidate on `refactor/template-legacy-cleanup` (not merged or tagged yet)
 

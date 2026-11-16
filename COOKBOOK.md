@@ -159,7 +159,7 @@ class Popup extends Component(HTMLElement) {
 
 Expressions, `onclick`, and `ref` on slotted nodes belong to the **parent that wrote them**, not to the layout. `this.refs.open` is on that parent, not on `<veda-slot>`.
 
-`{expr}` evaluates in the authoring parent's context. `${}` in slotted content is projected as a value, patches in place on parent `update()` and passes the usual URL policy; `Virtual`/direct-DOM hosts are legacy (see `SECURITY.md`).
+`{expr}` evaluates in the authoring parent's context. `${}` in slotted content is projected as a value, patches in place on parent `update()` and passes the usual URL policy. A host assembled by hand with direct DOM (`innerHTML`) has no compiled template and is not projected (see `SECURITY.md`).
 
 Content inside `<${Slot}>` is fallback content. It renders only when the parent did not pass a matching node. Its expressions, handlers, and refs belong to the layout that wrote the Slot. An assigned empty element suppresses fallback:
 

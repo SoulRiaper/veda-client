@@ -61,8 +61,10 @@ _Prepared as 4.0.0. Not merged to `master` yet._
 - Parent `${}` values reach a child only for parent-authored templates.
 - `EventPart` resolves the handler on every event.
 - `Value`/`Property`/`Relation` replace only changed values.
-- `Slot` projects compiled parent content with its values (live and
-  URL-guarded); legacy hosts keep the baked string (see `SECURITY.md`).
+- `Slot` projects a pruned clone of the host's compiled parent content with
+  its values (live and URL-guarded). Hosts assembled outside a template
+  (`innerHTML`) have no compiled source and are not projected; author them
+  with `html` (see `SECURITY.md`).
 - `raw` as a `${}` value is text; `html('...')` with values throws.
 - `items`/`condition` upgrade native elements only; diagnostics version is
   `templateresult-parts-v3`.

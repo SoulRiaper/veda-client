@@ -144,7 +144,7 @@ The framework exports the following modules from `./src/index.js`:
 |  | `Context` | Provide reactive values to descendants | ContextComponent.js |
 |  | `Slot` | Project author content into named layout holes | SlotComponent.js |
 |  | `Place` | Move rendered nodes to another container | PlaceComponent.js |
-|  | `Virtual` | Windowed list rendering (legacy string path) | VirtualComponent.js |
+|  | `Virtual` | Windowed list rendering through the compiled template engine | VirtualComponent.js |
 | **Data** | `Model` | RDF/semantic data model | Model.js |
 |  | `Backend` | Backend API communication | Backend.js |
 |  | `Subscription` | WebSocket subscriptions | Subscription.js |
