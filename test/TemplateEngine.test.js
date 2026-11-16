@@ -4,7 +4,7 @@ import {Loop} from '../src/components/LoopComponent.js';
 import {If} from '../src/components/IfComponent.js';
 import {flushEffects} from '../src/Effect.js';
 import {createTestComponent, createTestContainer} from './helpers.js';
-import {clearTemplateCache, compileTemplate, getTemplateCacheStats, render} from '../src/template/Template.js';
+import {clearTemplateCache, compileTemplate, render} from '../src/template/Template.js';
 import {
   TemplateResult, nothing, noChange, unsafeHTML, unsafeStatic,
 } from '../src/template/TemplateResult.js';
@@ -23,37 +23,19 @@ export default ({test, assert}) => {
     assert(result.values.length === 2, 'TemplateResult should retain values');
   });
 
-  test('TemplateEngine - template is compiled once per call site', async () => {
+  test('TemplateEngine - template is compiled once per call site', () => {
     clearTemplateCache();
 
-    class Item extends Component(HTMLElement) {
-      constructor() {
-        super();
-        this.state.label = 'item';
-      }
-      render() {
-        return html`<span class="item">{this.state.label}</span>`;
-      }
-    }
+    // Same call site (same strings array) and same value shape must reuse the
+    // compiled template; a different dynamic value must not create a new one.
+    const row = (label) => html`<span class="item">${label}</span>`;
 
-    const tag = `test-engine-item-${Date.now()}`;
-    Item.tag = tag;
-    customElements.define(tag, Item);
+    const first = compileTemplate(row('one'));
+    const second = compileTemplate(row('one'));
+    assert(first === second, 'The same call site should reuse the compiled template');
 
-    const {container, cleanup} = createTestContainer();
-    const first = document.createElement(tag);
-    container.appendChild(first);
-    await first.rendered;
-
-    const second = document.createElement(tag);
-    container.appendChild(second);
-    await second.rendered;
-
-    const stats = getTemplateCacheStats();
-    assert(stats.compiles === 1, `Expected one compile, got ${stats.compiles}`);
-    assert(stats.instances === 2, `Expected two instances, got ${stats.instances}`);
-
-    cleanup();
+    const third = compileTemplate(row('two'));
+    assert(third === first, 'Dynamic values should not create a new compiled template');
   });
 
   test('TemplateEngine - update() patches instead of replacing the DOM', async () => {
@@ -878,9 +860,12 @@ export default ({test, assert}) => {
 
   test('TemplateEngine - html("...") reuses the string cache and the mounted DOM', async () => {
     clearTemplateCache();
+    const source = '<div class="plain-string">plain</div>';
+    assert(compileTemplate(source) === compileTemplate(source), 'The string cache should reuse the compiled template');
+
     class PlainString extends Component(HTMLElement) {
       render() {
-        return html('<div class="plain-string">plain</div>');
+        return html(source);
       }
     }
 
@@ -889,8 +874,6 @@ export default ({test, assert}) => {
     await component.update();
     await component.update();
 
-    const stats = getTemplateCacheStats();
-    assert(stats.compiles === 1, `Expected one compile, got ${stats.compiles}`);
     assert(component.querySelector('.plain-string') === div, 'The string template should be patched in place');
     cleanup();
   });

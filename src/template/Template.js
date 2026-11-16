@@ -10,9 +10,11 @@ import {
   assertSafePropertyBinding, describeValue,
 } from './security.js';
 import TemplateInstance from './TemplateInstance.js';
-import {getTemplateStats, recordTemplateStat, resetTemplateStats, TEMPLATE_ENGINE} from './stats.js';
 
 export const TOKEN_PREFIX = '\uE000';
+
+// Diagnostic engine marker (stable across the 4.x line).
+export const TEMPLATE_ENGINE = 'templateresult-parts-v3';
 export const TOKEN_SUFFIX = '\uE001';
 
 const TOKEN_AT_START = new RegExp(`^${TOKEN_PREFIX}(\\d+)${TOKEN_SUFFIX}`);
@@ -674,7 +676,6 @@ export class CompiledTemplate {
   }
 
   instantiate(context, host, options) {
-    recordTemplateStat('instances');
     return new TemplateInstance(this, context, host, options);
   }
 }
@@ -1028,11 +1029,9 @@ export function compileTemplate(input) {
     if (cached) {
       perStrings.delete(shape);
       perStrings.set(shape, cached);
-      recordTemplateStat('cacheHits');
       return cached;
     }
 
-    recordTemplateStat('compiles');
     if (!foldedSource) {
       tokenMap = new Map(input.values.map((value, index) => [index, value]));
       foldedSource = classifyTemplateSource(source, tokenMap).foldedSource;
@@ -1058,11 +1057,9 @@ export function compileTemplate(input) {
   if (cached) {
     stringCache.delete(stringSource);
     stringCache.set(stringSource, cached);
-    recordTemplateStat('cacheHits');
     return cached;
   }
 
-  recordTemplateStat('compiles');
   const compiled = compileSource(stringSource, new Map(), {type: 'html'});
   stringCache.set(stringSource, compiled);
   trimCache(stringCache, MAX_STRING_CACHE);
@@ -1088,7 +1085,6 @@ export function compileTemplateWithValues(source, values = []) {
   const tokenMap = new Map();
   for (let index = 0; index < values.length; index++) tokenMap.set(index, values[index]);
   const classified = classifyTemplateSource(text, tokenMap);
-  recordTemplateStat('compiles');
   return compileSource(text, tokenMap, {
     type: 'html',
     foldedSource: classified.foldedSource,
@@ -1100,8 +1096,13 @@ export function clearTemplateCache() {
   stringCache.clear();
   resultCache = new WeakMap();
   sourceCache = new WeakMap();
-  resetTemplateStats();
 }
+
+/**
+ * @deprecated Runtime counters were removed in 4.1; kept as a no-op for API
+ * compatibility. Use `clearTemplateCache()` to reset the cache between tests.
+ */
+export function resetTemplateStats() {}
 
 
 const ROOT_PART = Symbol.for('veda.rootPart');
@@ -1138,14 +1139,17 @@ export function render(result, container) {
   return root;
 }
 
+/**
+ * Remaining template-cache diagnostics. The per-host/per-tag counters and the
+ * DOM-write accounting were removed in 4.1; only the engine marker and the
+ * size of the string cache are still reported.
+ *
+ * @deprecated Prefer `clearTemplateCache()` and structural tests.
+ */
 export function getTemplateCacheStats() {
-  return {...getTemplateStats(), stringCacheSize: stringCache.size};
+  return {engine: TEMPLATE_ENGINE, stringCacheSize: stringCache.size};
 }
-
-export {resetTemplateStats, TEMPLATE_ENGINE};
 
 if (typeof window !== 'undefined') {
   window.__VEDA_TEMPLATE_ENGINE__ = TEMPLATE_ENGINE;
-  window.__VEDA_TEMPLATE_STATS__ = getTemplateCacheStats;
-  window.__VEDA_TEMPLATE_RESET_STATS__ = resetTemplateStats;
 }

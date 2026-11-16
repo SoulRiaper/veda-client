@@ -9,7 +9,6 @@ import {
   assertSafeUrlValue, describeValue,
 } from './security.js';
 import {factories} from './factories.js';
-import {recordComponentTag, recordInstanceHost, recordTemplateStat} from './stats.js';
 
 const METHOD_NAME_RE = /^(?:this\.)?([A-Za-z_$][\w$]*)$/;
 const MAX_TREE_DEPTH = 20;
@@ -347,7 +346,6 @@ class ChildPart {
   #insertBefore(nodes) {
     const parent = this.#anchor.parentNode;
     if (!parent) return;
-    if (nodes.length) recordTemplateStat('domWrites', nodes.length);
     for (const node of nodes) parent.insertBefore(node, this.#anchor);
   }
 
@@ -454,7 +452,6 @@ class AttributePart {
     if (this.mode === 'component') {
       if (hasNothing && text === '') this.element.removeAttribute(this.name);
       else if (this.element.getAttribute(this.name) !== text) {
-        recordTemplateStat('domWrites');
         this.element.setAttribute(this.name, text);
       }
       return;
@@ -486,7 +483,6 @@ class AttributePart {
       const boolValue = !hasNull && value !== 'false' &&
         (value === 'true' || value === '' || value === attrName);
       if (node[attrName] !== boolValue) {
-        recordTemplateStat('domWrites');
         node[attrName] = boolValue;
         node.toggleAttribute(attrName, boolValue);
       }
@@ -497,14 +493,12 @@ class AttributePart {
 
     if (shouldUseProperty) {
       if (node[attrName] !== value) {
-        recordTemplateStat('domWrites');
         node[attrName] = value;
       }
       return;
     }
 
     if (node.getAttribute(attrName) !== value) {
-      recordTemplateStat('domWrites');
       node.setAttribute(attrName, value);
     }
   }
@@ -549,7 +543,6 @@ class PropertyPart {
       if (value === noChange) return;
       if (typeof value === 'string') assertSafeUrlValue(this.name.toLowerCase(), value);
       if (rawTarget[this.name] !== value) {
-        recordTemplateStat('domWrites');
         this.target[this.name] = value === nothing ? '' : value;
       }
       return;
@@ -561,7 +554,6 @@ class PropertyPart {
     if (skip) return;
     assertSafeUrlValue(this.name.toLowerCase(), text);
     if (rawTarget[this.name] !== text) {
-      recordTemplateStat('domWrites');
       this.target[this.name] = text;
     }
   }
@@ -700,7 +692,6 @@ class AttributesPart {
       assertSafeDataPropertyName(name);
       assertSafeUrlValue(name.toLowerCase(), value);
       if (this.element[name] !== value) {
-        recordTemplateStat('domWrites');
         this.element[name] = value;
       }
       this.#applied.set(rawName, {kind, name, value});
@@ -712,7 +703,6 @@ class AttributesPart {
     if (kind === SPREAD_BOOLEAN) {
       const on = value !== false && value != null && value !== 'false';
       if (this.element.hasAttribute(name) !== on) {
-        recordTemplateStat('domWrites');
         this.element.toggleAttribute(name, on);
       }
       this.#applied.set(rawName, {kind, name, value});
@@ -727,7 +717,6 @@ class AttributesPart {
     assertSafeUrlValue(name.toLowerCase(), value);
     const text = value === true ? '' : spreadValueText(value);
     if (this.element.getAttribute(name) !== text) {
-      recordTemplateStat('domWrites');
       this.element.setAttribute(name, text);
     }
     this.#applied.set(rawName, {kind, name, value});
@@ -987,8 +976,6 @@ function createComponentElement(descriptor, context, host, instance) {
     component.setAttribute(name, value);
   }
 
-  recordTemplateStat('componentCreates');
-  recordComponentTag(tag);
   component.template = descriptor.childLegacy || '';
   // Kept separately from the legacy string: the raw source still carries
   // `${}` tokens, so Slot projection can compile it with the parent values and
@@ -1077,7 +1064,6 @@ export default class TemplateInstance {
     this.compiled = compiled;
     this.context = context;
     this.host = host;
-    recordInstanceHost(host);
     this.options = options;
     this.result = options.result || null;
     this.values = options.values || this.result?.values || [];
@@ -1122,19 +1108,16 @@ export default class TemplateInstance {
   }
 
   mount(container) {
-    recordTemplateStat('mounts');
     container.replaceChildren(this.fragment);
     this.fragment = null;
   }
 
   setResult(result) {
-    recordTemplateStat('patches');
     this.result = result;
     this.setValues(result?.values || []);
   }
 
   setValues(values) {
-    recordTemplateStat('patches');
     this.values = values || [];
     for (const part of this.parts) part.setValues?.(this.values);
     for (const {component} of this.components) {
