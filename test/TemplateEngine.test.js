@@ -1112,5 +1112,43 @@ export default ({test, assert}) => {
     );
   });
 
+  test('TemplateEngine - hyphenated custom events bind through on* attributes', async () => {
+    class CustomEventChild extends Component(HTMLElement) {
+      render() {
+        return html`<button class="emit" onclick="{this.emit}">emit</button>`;
+      }
+      emit() {
+        this.dispatchEvent(new CustomEvent('tab-change', {
+          bubbles: true,
+          composed: true,
+          detail: {id: 'b'},
+        }));
+      }
+    }
+
+    const childTag = `test-event-child-${Date.now()}`;
+    CustomEventChild.tag = childTag;
+    customElements.define(childTag, CustomEventChild);
+
+    class CustomEventParent extends Component(HTMLElement) {
+      constructor() {
+        super();
+        this.received = null;
+      }
+      handleTabChange(event) {
+        this.received = event.detail;
+      }
+      render() {
+        return html`<${CustomEventChild} ontab-change="{this.handleTabChange}"></${CustomEventChild}>`;
+      }
+    }
+
+    const {component, cleanup} = await createTestComponent(CustomEventParent);
+    component.querySelector('.emit').click();
+    await flushEffects();
+    assert(component.received?.id === 'b', 'Custom event should reach the parent handler');
+    cleanup();
+  });
+
 
 };

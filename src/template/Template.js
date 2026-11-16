@@ -84,8 +84,22 @@ const CUSTOM_ELEMENT_RE = /^[a-z][a-z0-9._-]*-[a-z0-9._-]*$/i;
 // A DOM element exposes its event handler content attributes as IDL properties
 // (`onclick`, `onerror`, ...). Checking the property avoids treating ordinary
 // attributes that merely start with "on" (once, ontology) as handlers.
+//
+// Custom events have no IDL property, so `ontab-change="{handler}"` (the form
+// produced by the JSX bridge for `on:tab-change`) must be recognized by name.
+// Restrict that fallback to hyphenated names: `once`, `ontology`, and similar
+// ordinary attributes stay attributes, while `tab-change` / `model-change`
+// keep working like they did before the template-engine rewrite.
 function isEventHandlerAttribute(element, name) {
-  return name.startsWith('on') && name.length > 2 && name in element;
+  if (!name.startsWith('on') || name.length <= 2) return false;
+  // Explicit `on:event` form works for both DOM and custom events.
+  if (name.startsWith('on:')) return name.length > 3;
+  if (name in element) return true;
+  return name.includes('-');
+}
+
+function eventNameFromAttribute(name) {
+  return (name.startsWith('on:') ? name.slice(3) : name.slice(2)).toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -766,7 +780,7 @@ function processAttributes(element, partList, tokenMap, type, isComponent, stati
         // the authored {expression} form is accepted.
         throw new Error(`The "${name}" handler must use {expression}, not a static value`);
       }
-      const eventName = name.slice(2).toLowerCase();
+      const eventName = eventNameFromAttribute(name);
       const expr = value.replace(/[{}]/g, '').trim();
       element.removeAttribute(name);
       partList.push({type: 'event', eventName, expr});
