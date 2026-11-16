@@ -6,7 +6,7 @@ import {compileTemplate} from '../template/Template.js';
 export default function RelationComponent (Class = HTMLElement) {
   return class RelationComponentClass extends ValueComponent(Class) {
     renderValue (value, container, index) {
-      const hasCustomContent = this.template?.trim();
+      const hasCustomContent = this._compiledTemplate || this.template?.trim();
       if (!hasCustomContent) {
         return super.renderValue(value, container, index);
       }

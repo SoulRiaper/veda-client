@@ -1,5 +1,5 @@
 import {
-  isTemplateResult, isUnsafeHTML, isUnsafeStatic, nothing, noChange, safe,
+  isTemplateResult, isUnsafeStatic, nothing, noChange,
 } from './TemplateResult.js';
 import {
   ELEMENT_MARKER, SPREAD_MARKER_PREFIX, TEXT_MARKER_PREFIX, TEXT_MARKER_SUFFIX,
@@ -66,17 +66,6 @@ function readTokenAt(source, index) {
     text: match[0],
     end: index + match[0].length,
   };
-}
-
-export function stringifyValue(value, type = 'html') {
-  if (value == null) return '';
-  if (Array.isArray(value)) return value.map(item => stringifyValue(item, type)).join(' ');
-  if (isUnsafeStatic(value)) return String(value.value ?? '');
-  if (isTemplateResult(value)) return value.toString();
-  if (isUnsafeHTML(value)) return String(value.value ?? '');
-  if (type === 'raw') return String(value);
-  if (typeof value === 'string' || value instanceof String) return safe(String(value));
-  return String(value);
 }
 
 const TAG_NAME_RE = /^[A-Za-z][A-Za-z0-9._:-]*$/;
@@ -536,18 +525,6 @@ function classifyTemplateSource(source, tokenMap) {
   return {foldedSource: out, modes, valueDependent};
 }
 
-function resolveTokensToLegacy(source, tokenMap, type, modes) {
-  TOKEN_GLOBAL.lastIndex = 0;
-  return source.replace(TOKEN_GLOBAL, (_, rawIndex) => {
-    const index = Number(rawIndex);
-    // A spread slot is applied through the DOM and has no string form. The
-    // legacy string path is kept for components that still render their
-    // author content as a string; it is documented as lossy for `${}` values.
-    if (modes?.get(index) === 'spread') return '';
-    return stringifyValue(tokenMap.get(index), type);
-  });
-}
-
 /**
  * Resolve `${}` tokens in a plain string (for example the `slot` attribute of
  * projected content) against the values of the owning call-site.
@@ -697,7 +674,7 @@ function replaceTextNode(node, segments, compiled, nextId, rcdata) {
   node.replaceWith(...replacement);
 }
 
-function processAttributes(element, partList, tokenMap, type, isComponent, staticAttrs, isFrameworkComponent) {
+function processAttributes(element, partList, tokenMap, isComponent, staticAttrs, isFrameworkComponent) {
   for (const attr of Array.from(element.attributes)) {
     const name = attr.name;
     const value = attr.value;
@@ -795,8 +772,10 @@ function processAttributes(element, partList, tokenMap, type, isComponent, stati
 
     const segments = parseSegments(value, tokenMap);
     if (!hasDynamicSegments(segments)) {
-      staticAttrs?.push([name, resolveTokensToLegacy(value, tokenMap, type)]);
-      continue;
+      // A token cannot survive as a static attribute value: static-trusted
+      // tokens are folded into the source at compile time. Reaching this
+      // branch means a leftover interpolation token reached the compiler.
+      throw new Error(`Unresolved \${} value in the "${name}" attribute`);
     }
 
     element.removeAttribute(name);
@@ -875,10 +854,6 @@ function compileSource(source, tokenMap, options = {}) {
         const childCompiled = childSource.trim()
           ? compileSource(childSource, tokenMap, {type})
           : null;
-        const childLegacy = resolveTokensToLegacy(
-          childSource, tokenMap, type, childCompiled?.modes,
-        );
-
         // Child content is rendered by the child component. Keep the parent
         // template free of it, so parent parts never see child internals.
         el.innerHTML = '';
@@ -905,7 +880,7 @@ function compileSource(source, tokenMap, options = {}) {
         const isFrameworkComponent = hasItems || hasCondition ||
           tag === 'veda-loop' || tag === 'veda-if' || tag === 'veda-virtual' ||
           /-(loop|if)-component$/.test(isAttr);
-        processAttributes(el, group.parts, tokenMap, type, true, staticAttrs, isFrameworkComponent);
+        processAttributes(el, group.parts, tokenMap, true, staticAttrs, isFrameworkComponent);
 
         group.component = {
           kind,
@@ -914,7 +889,6 @@ function compileSource(source, tokenMap, options = {}) {
           elementClass: el.constructor,
           staticAttrs,
           childCompiled,
-          childLegacy,
           // Raw author content with its `${}` tokens intact. Slot projection
           // compiles it with the component values instead of re-parsing the
           // baked legacy string, so values never become markup.
@@ -934,7 +908,7 @@ function compileSource(source, tokenMap, options = {}) {
       }
 
       const group = {id: nextId(), component: null, parts: []};
-      processAttributes(el, group.parts, tokenMap, type, false, null);
+      processAttributes(el, group.parts, tokenMap, false, null);
       if (group.parts.length) {
         el.setAttribute(ELEMENT_MARKER, String(group.id));
         compiled.elements.push(group);

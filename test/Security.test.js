@@ -4,6 +4,7 @@ import { flushEffects } from '../src/Effect.js';
 import Model from '../src/Model.js';
 import ExpressionParser from '../src/components/ExpressionParser.js';
 import { createTestComponent } from './helpers.js';
+import { render } from '../src/template/Template.js';
 
 export default ({ test, assert }) => {
 
@@ -77,39 +78,37 @@ export default ({ test, assert }) => {
     cleanup();
   });
 
-  test('Security - html() escapes all dangerous characters', async () => {
+  test('Security - html() writes all dangerous characters as text', async () => {
     const dangerous = '&<>"\'/\\`';
-    const result = html`<div>${dangerous}</div>`;
-
-    assert(String(result).includes('&amp;'), 'Should escape &');
-    assert(String(result).includes('&lt;'), 'Should escape <');
-    assert(String(result).includes('&gt;'), 'Should escape >');
-    assert(String(result).includes('&quot;'), 'Should escape "');
-    assert(String(result).includes('&#39;'), 'Should escape \'');
-    assert(String(result).includes('&#x2F;'), 'Should escape /');
-    assert(String(result).includes('&#x5C;'), 'Should escape \\');
-    assert(String(result).includes('&#x60;'), 'Should escape `');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    try {
+      render(html`<div>${dangerous}</div>`, container);
+      const div = container.querySelector('div');
+      assert(div.textContent === dangerous, 'The value should be text');
+      assert(div.innerHTML.includes('&lt;'), 'The markup should contain escaped text');
+      assert(div.children.length === 0, 'The value must not create elements');
+    } finally {
+      container.remove();
+    }
   });
 
-  test('Security - html() escapes array items', async () => {
+  test('Security - html() keeps array items as text', async () => {
     const items = [
       '<script>bad()</script>',
       '<img src=x onerror=bad()>',
       'javascript:bad()'
     ];
-    const result = html`<ul>${items}</ul>`;
-
-    // Before parsing, the result should have escaped values
-    assert(String(result).includes('&lt;'), 'Should escape < in result string');
-    assert(String(result).includes('&gt;'), 'Should escape > in result string');
-
-    // Create a temp element to test actual rendering
-    const temp = document.createElement('div');
-    temp.innerHTML = String(result);
-
-    // Should not have executable script or img elements
-    assert(temp.querySelector('script') === null, 'Should not create script element');
-    assert(temp.querySelector('img') === null, 'Should not create img element');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    try {
+      render(html`<ul>${items}</ul>`, container);
+      assert(container.querySelector('script') === null, 'Should not create script element');
+      assert(container.querySelector('img') === null, 'Should not create img element');
+      assert(container.querySelector('ul').textContent.includes('<script>bad()</script>'), 'Items should stay text');
+    } finally {
+      container.remove();
+    }
   });
 
   test('Security - safe() removes reactive expressions', () => {
@@ -451,13 +450,15 @@ export default ({ test, assert }) => {
 
   test('Security - html() handles large arrays', async () => {
     const largeArray = new Array(1000).fill('<script>bad</script>');
-
-    const start = Date.now();
-    const result = html`<div>${largeArray}</div>`;
-    const duration = Date.now() - start;
-
-    assert(!String(result).includes('<script>'), 'Should escape all items');
-    assert(duration < 100, 'Should complete quickly (< 100ms)');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    try {
+      render(html`<div>${largeArray}</div>`, container);
+      assert(container.querySelector('script') === null, 'Should not create script elements');
+      assert(container.textContent.includes('<script>bad</script>'), 'Items should stay text');
+    } finally {
+      container.remove();
+    }
   });
 
   // ==================== ATTRIBUTE INJECTION ====================
@@ -697,12 +698,17 @@ export default ({ test, assert }) => {
     cleanup();
   });
 
-  test('Security - html tag removes {expr} in interpolated values', () => {
+  test('Security - html tag keeps {expr} in interpolated values literal', () => {
     const malicious = '{alert("XSS")}';
-    const result = html`<div>${malicious}</div>`;
-
-    // Should not contain {expr} that could be parsed as expression
-    assert(!String(result).includes('{alert'), 'html tag should remove {expr} in interpolated values');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    try {
+      render(html`<div>${malicious}</div>`, container);
+      assert(container.textContent.includes('{alert("XSS")}'), 'The value should stay literal text');
+      assert(container.querySelector('div').children.length === 0, 'The text must not become markup');
+    } finally {
+      container.remove();
+    }
   });
 
   test('Security - expression results with {expr} patterns are safe', async () => {

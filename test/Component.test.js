@@ -8,6 +8,7 @@ import { Place } from '../src/components/PlaceComponent.js';
 import { flushEffects } from '../src/Effect.js';
 import Model from '../src/Model.js';
 import { createTestComponent, createTestContainer, assertAttribute, createSpy, captureConsole } from './helpers.js';
+import { render } from '../src/template/Template.js';
 
 export default ({ test, assert }) => {
 
@@ -47,19 +48,28 @@ export default ({ test, assert }) => {
     });
   });
 
-  test('html() tagged template - escaping and safe values', () => {
-    // Combines: escapes values, preserves safe markup, handles arrays
-    const xss = '<script>alert("xss")</script>';
-    const result1 = html`<div>${xss}</div>`;
-    assert(String(result1).includes('&lt;script&gt;') && !String(result1).includes('<script>'), 'Should escape HTML');
+  test('html() tagged template - values are text, nested results are DOM', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    try {
+      const xss = '<script>alert("xss")</script>';
+      render(html`<div>${xss}</div>`, container);
+      const div = container.querySelector('div');
+      assert(div.textContent === xss, 'A value should be rendered as text');
+      assert(div.innerHTML.includes('&lt;script&gt;'), 'The markup should contain escaped text');
+      assert(container.querySelector('script') === null, 'A value must not create a script element');
 
-    const inner = html`<span>Safe</span>`;
-    const outer = html`<div>${inner}</div>`;
-    assert(String(outer).includes('<span>Safe</span>'), 'Should preserve safe markup');
+      const inner = html`<span>Safe</span>`;
+      render(html`<div>${inner}</div>`, container);
+      assert(container.querySelector('div span')?.textContent === 'Safe', 'A nested TemplateResult should render as DOM');
 
-    const items = ['<b>one</b>', '<b>two</b>'];
-    const result2 = html`<div>${items}</div>`;
-    assert(String(result2).includes('&lt;b&gt;'), 'Should escape array items');
+      const items = ['<b>one</b>', '<b>two</b>'];
+      render(html`<div>${items}</div>`, container);
+      assert(container.querySelector('div').textContent.includes('<b>one</b>'), 'Array items should stay text');
+      assert(container.querySelector('b') === null, 'Array items must not become markup');
+    } finally {
+      container.remove();
+    }
   });
 
   test('raw() - does not escape values', () => {

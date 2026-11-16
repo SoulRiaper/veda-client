@@ -17,8 +17,8 @@ export default ({test, assert}) => {
 
     assert(result instanceof TemplateResult, 'html() should return TemplateResult');
     assert(!(result instanceof String), 'TemplateResult must not be a String object');
-    assert(String(result).includes('&lt;x&gt;'), 'Diagnostic string form should be escaped');
-    assert(String(result).includes('class="a b"'), 'Diagnostic string form should include values');
+    assert(result.toString === Object.prototype.toString,
+      'TemplateResult should not implement a template serializer');
     assert(result.strings.length === 3, 'TemplateResult should retain strings');
     assert(result.values.length === 2, 'TemplateResult should retain values');
   });

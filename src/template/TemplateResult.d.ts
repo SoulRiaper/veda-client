@@ -12,7 +12,6 @@ export class TemplateResult {
   readonly values: readonly any[];
   readonly type: 'html' | 'raw';
   readonly isTemplateResult: true;
-  toString(): string;
 }
 
 export declare const nothing: unique symbol;

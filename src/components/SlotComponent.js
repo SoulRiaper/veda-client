@@ -195,10 +195,10 @@ export default function SlotComponent(Class = HTMLElement) {
         hasProjectedContent = true;
       }
 
-      if (!hasProjectedContent && this.template) {
+      if (!hasProjectedContent && (this._compiledTemplate || this.template)) {
         return {
           compiled: this._compiledTemplate || null,
-          markup: this.template,
+          markup: this.template || '',
           key: this._compiledTemplate ? 'compiled' : this.template,
           hasProjected: false,
         };
@@ -224,12 +224,14 @@ export default function SlotComponent(Class = HTMLElement) {
       let obj = context;
       for (let i = 0; obj && i < MAX_TREE_DEPTH; i++) {
         const raw = toRaw(obj) || obj;
-        // State objects prototype-chain to their component, so instanceof matches
-        // the proxy too. Only the component owns `template`.
+        // State objects prototype-chain to their component, so instanceof
+        // matches the proxy too. Only the component owns `template`.
+        const ownsSource = Object.prototype.hasOwnProperty.call(raw, '_templateSource');
         if (
           raw instanceof Element
-          && Object.prototype.hasOwnProperty.call(raw, 'template')
-          && typeof raw.template === 'string'
+          && (ownsSource
+            || (Object.prototype.hasOwnProperty.call(raw, 'template')
+              && typeof raw.template === 'string'))
         ) return raw;
         obj = Object.getPrototypeOf(raw);
         if (obj === Object.prototype) break;
@@ -245,7 +247,8 @@ export default function SlotComponent(Class = HTMLElement) {
 
       let obj = this._vedaEvalContext || this._vedaParentContext;
       for (let i = 0; obj && i < MAX_TREE_DEPTH; i++) {
-        if (typeof obj.template === 'string') return obj;
+        if (typeof obj.template === 'string'
+          || Object.prototype.hasOwnProperty.call(obj, '_templateSource')) return obj;
         obj = Object.getPrototypeOf(obj);
       }
       return null;

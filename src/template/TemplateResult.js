@@ -2,9 +2,9 @@
  * TemplateResult: a Lit-like template value.
  *
  * `html` returns a TemplateResult object. It is intentionally not a String
- * subclass any more: rendering goes through the template engine, not through
- * `innerHTML`. `toString()` is kept for diagnostics and migration, but the
- * supported way to render a result is `render()` or a Component.
+ * subclass: rendering goes through the template engine, never through
+ * `innerHTML`, and there is no string serialization of a template. Use
+ * `render()` or return the result from `Component.render()`.
  *
  * `{expr}` inside the static parts remains the Veda reactive expression
  * syntax. `${value}` interpolations become template values.
@@ -69,23 +69,25 @@ export function safe(value) {
     .replace(SAFE_EXPR_REGEX, '');
 }
 
-function legacyValue(value, type) {
-  if (value == null || value === nothing || value === noChange) return '';
-  if (Array.isArray(value)) {
-    return value.map(item => legacyValue(item, type)).join(' ');
-  }
-  if (value instanceof TemplateResult) {
-    // Nested templates are already escaped/serialized by their own tag.
-    return value.toString();
-  }
-  if (isUnsafeHTML(value)) return String(value.value ?? '');
-  if (type === 'raw') {
-    return String(value);
-  }
-  if (typeof value === 'string' || value instanceof String) {
-    return safe(String(value));
-  }
+function rawValue(value) {
+  if (value == null) return '';
+  if (Array.isArray(value)) return value.map(rawValue).join(' ');
   return String(value);
+}
+
+function rawStrings(strings, values) {
+  if (typeof strings === 'string') {
+    let result = strings;
+    for (const value of values) result += rawValue(value);
+    return result.trimEnd();
+  }
+  let result = '';
+  const count = Math.max(strings.length, values.length + 1);
+  for (let i = 0; i < count; i++) {
+    result += strings[i] ?? '';
+    if (i < values.length) result += rawValue(values[i]);
+  }
+  return result.trimEnd();
 }
 
 export class TemplateResult {
@@ -101,33 +103,10 @@ export class TemplateResult {
   }
 
   get isTemplateResult() { return true; }
-
-  /**
-   * Diagnostic/migration serialization. Do not use this to render: it loses
-   * reactivity and bypasses the template engine.
-   */
-  toString() {
-    return legacyStrings(this.strings, this.values, this.type);
-  }
 }
 
 export function isTemplateResult(value) {
   return value instanceof TemplateResult;
-}
-
-function legacyStrings(strings, values, type) {
-  if (typeof strings === 'string') {
-    let result = strings;
-    for (let i = 0; i < values.length; i++) result += legacyValue(values[i], type);
-    return result.trimEnd();
-  }
-  let result = '';
-  const count = Math.max(strings.length, values.length + 1);
-  for (let i = 0; i < count; i++) {
-    result += strings[i] ?? '';
-    if (i < values.length) result += legacyValue(values[i], type);
-  }
-  return result.trimEnd();
 }
 
 export function html(strings, ...values) {
@@ -136,6 +115,5 @@ export function html(strings, ...values) {
 
 export function raw(strings, ...values) {
   // `raw` keeps its historical string contract. It is not a TemplateResult.
-  if (typeof strings === 'string' && values.length === 0) return strings;
-  return legacyStrings(strings, values, 'raw');
+  return rawStrings(strings, values);
 }

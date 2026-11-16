@@ -105,7 +105,8 @@ function segmentValueText(value, type = 'text') {
   // A static-trusted value used in a value position is still just a string.
   if (isUnsafeStatic(value)) return String(value.value ?? '');
   if (isTemplateResult(value)) {
-    return type === 'attribute' ? String(value) : '';
+    // A template is DOM, not an attribute/property value.
+    return '';
   }
   if (isUnsafeHTML(value)) return type === 'attribute' ? String(value.value) : '';
   if (typeof Node !== 'undefined' && value instanceof Node) return '';
@@ -976,7 +977,6 @@ function createComponentElement(descriptor, context, host, instance) {
     component.setAttribute(name, value);
   }
 
-  component.template = descriptor.childLegacy || '';
   // Kept separately from the legacy string: the raw source still carries
   // `${}` tokens, so Slot projection can compile it with the parent values and
   // keep them as values (with the usual URL/attribute policy).

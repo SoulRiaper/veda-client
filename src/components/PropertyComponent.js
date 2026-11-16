@@ -26,7 +26,7 @@ export default function PropertyComponent (Class = HTMLElement) {
         }
       }
 
-      const hasCustomContent = this.template?.trim();
+      const hasCustomContent = this._compiledTemplate || this.template?.trim();
       if (!hasCustomContent) {
         return super.renderValue(value, container, index);
       }
