@@ -1,7 +1,7 @@
 import type {TemplateResult} from './TemplateResult.js';
 
 /**
- * @deprecated Per-host/counter diagnostics were removed in 4.1.
+ * @deprecated Per-host/counter diagnostics were removed in 4.0.
  * Only the engine marker and the string-cache size are reported now.
  */
 export interface TemplateCacheStats {

@@ -1024,7 +1024,7 @@ export function clearTemplateCache() {
 }
 
 /**
- * @deprecated Runtime counters were removed in 4.1; kept as a no-op for API
+ * @deprecated Runtime counters were removed in 4.0; kept as a no-op for API
  * compatibility. Use `clearTemplateCache()` to reset the cache between tests.
  */
 export function resetTemplateStats() {}
@@ -1066,7 +1066,7 @@ export function render(result, container) {
 
 /**
  * Remaining template-cache diagnostics. The per-host/per-tag counters and the
- * DOM-write accounting were removed in 4.1; only the engine marker and the
+ * DOM-write accounting were removed in 4.0; only the engine marker and the
  * size of the string cache are still reported.
  *
  * @deprecated Prefer `clearTemplateCache()` and structural tests.

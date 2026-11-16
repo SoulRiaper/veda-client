@@ -112,7 +112,8 @@ html`<div class="row ${this.state.cls}">${this.state.title}</div>`
 | Позиция | Поведение |
 |---|---|
 | Имя тега `<${Comp}>` | Component class с собственным `static tag` или `unsafeStatic('name')`; строка из данных и класс без своего тега — **ошибка** |
-| Имя атрибута `${name}="..."` | `unsafeStatic` — имя; иначе `${attrs}`-слот, объект применяется через DOM |
+| Атрибут `${attrs}` целиком | spread-слот: объект/`Map` применяется через DOM |
+| Имя атрибута `${name}="..."` или `foo${x}` | только `unsafeStatic('name')`; значение из данных — **ошибка компиляции** |
 | `is="${Comp}"` | Component class или `unsafeStatic('tag')`; иное — **ошибка** |
 | Значение атрибута `class="a ${x}"` | `AttributePart` |
 | Значение атрибута без кавычек `class=${x}`, `class = ${x}` | `AttributePart` |
