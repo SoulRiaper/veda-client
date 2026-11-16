@@ -11,8 +11,13 @@ _Prepared as 4.0.0. Not merged to `master` yet._
 
 ### Breaking
 - `html` returns a `TemplateResult` object, not a string. Mount it with
-  `render(result, container)` or return it from `Component.render()`;
-  `String(result)` is a diagnostic serializer only.
+  `render(result, container)` or return it from `Component.render()`.
+- `TemplateResult.toString()` and the legacy string serializer were removed:
+  there is no string form of a template, and `String(result)` no longer
+  produces markup.
+- Declaratively created components no longer receive a baked `template` string;
+  their author content lives in `_compiledTemplate`/`_templateSource`. A custom
+  `render()` that reads `this.template` must switch to returning an `html` template literal.
 - Values never become markup: `${}` is a text/attribute/spread value. Tag and
   attribute names require an authored name, a Component class with its own
   `static tag`, or `unsafeStatic()`; everything else throws.
@@ -36,11 +41,16 @@ _Prepared as 4.0.0. Not merged to `master` yet._
   errors, and a `veda-template` Trusted Types policy.
 - `src/template/security.js`: attribute/URL policy and forbidden names.
 - Template cache per call-site/source and an `ExpressionParser.compile()` cache.
-- `Loop`, `If`, `Slot`, `Place`, `Property`, `Relation` and `Value` use compiled
-  templates and Parts; nested `TemplateResult` instances are reused.
+- `Loop`, `If`, `Slot`, `Place`, `Property`, `Relation`, `Value` and `Virtual`
+  use compiled templates and Parts; nested `TemplateResult` instances are reused.
+- `Virtual` renders its children through the same engine, so `${}` values,
+  refs, listeners and the URL/attribute policy now apply to virtualized lists.
 - `TEMPLATE_ENGINE.md` documents the engine and its limitations.
 
 ### Changed
+- Runtime diagnostics counters were removed from the render hot paths.
+  `getTemplateCacheStats()` now reports only `{engine, stringCacheSize}` and
+  `resetTemplateStats()` is a no-op; both are deprecated.
 - `update()` patches unchanged templates, keeping DOM, child components, refs
   and focus; `Place`/`Slot` patch moved/projected nodes in place.
 - Parent `${}` values reach a child only for parent-authored templates.

@@ -1421,8 +1421,8 @@ render(view('Ada'), document.querySelector('#app'));
   `srcdoc`, and `:srcdoc`/`:on*`/`:innerHTML`/`:outerHTML` are compile errors.
 - Script URLs (`javascript:`/`vbscript:`) are refused for URL attributes.
 
-Slotted `${}` values use the same compiler and policy; `Virtual` and the Slot
-fallback for hosts without a compiled template are legacy string paths — see
+Slotted `${}` values use the same compiler and policy; only the Slot fallback
+for hosts without a compiled template is a legacy string path — see
 [SECURITY.md](./SECURITY.md#legacy-string-paths-are-the-exception).
 Engine details and limitations — [TEMPLATE_ENGINE.md](./TEMPLATE_ENGINE.md).
 
@@ -1473,7 +1473,6 @@ class MyComponent extends Component(HTMLElement) {
 - Effect cleanup happens **BEFORE** `removed()` lifecycle
 - Same-template `update()` patches text/attributes and reuses child components
 - The legacy `_process()` walker was removed in 4.0; rendering always goes through compiled templates and Parts
-- `Virtual` still has its own manual `#prepareChildTemplates` path
 - Different-template `update()` replaces the subtree and cleans old Parts
 - User effects (via `this.effect()`) persist across re-renders
 - User effects are only cleaned up on disconnect
@@ -1616,7 +1615,7 @@ class TodoItem extends Component(HTMLElement) {
 - **Static attributes:** `as` and `key` must be static strings
 - Source array must be reactive
 - Keyed reconciliation uses LIS reordering (O(n log n)); frequent reorders of 1000+ items are still costly
-- Use the `<veda-virtual>` component for very large lists; its content is a legacy string path (no `${}` values, see the Template API section above)
+- Use the `<veda-virtual>` component for very large lists; its children use the same compiled-template path and `${}` rules
 
 **Common Issues and Solutions:**
 

@@ -1,11 +1,9 @@
 # Template Engine
 
-Статус: **release candidate 4.0.0 (breaking)**, ветка `feat/template-result-parts`;
-в `master` ещё не влит. Движок построен по модели lit-html: шаблон статичен,
-значения пишутся в DOM через Part-ы, а не парсятся как markup. `Component`,
-`Loop`, `If`, `Slot`, `Place`, `Property`, `Relation` и `Value` используют
-новый путь. `Virtual` остаётся на собственном `#prepareChildTemplates`.
-Legacy-обходчик `Component._process` удалён в 4.0; рендер всегда идёт через
+Движок построен по модели lit-html: шаблон статичен, значения пишутся в DOM
+через Part-ы, а не парсятся как markup. `Component`, `Loop`, `If`, `Slot`,
+`Place`, `Property`, `Relation`, `Value` и `Virtual` используют один и тот же
+путь. Legacy-обходчик `Component._process` удалён; рендер всегда идёт через
 скомпилированные шаблоны и Part-ы.
 
 ## Главное правило
@@ -21,9 +19,10 @@ Static-trusted значение нельзя подделать данными: 
 поэтому ни `JSON.parse`, ни объект из сети не могут выглядеть как
 `unsafeStatic()` (Lit защищает `unsafeStatic` ровно так же).
 
-Исключение — **legacy-пути** (`Virtual`, fallback `Slot` для хоста без
-скомпилированного исходника): там `${}` запекается в markup и не проходит
-URL-политику; см. «Ограничения» и `SECURITY.md`.
+Исключение — **fallback `Slot`** для хоста без скомпилированного исходника
+(элемент, собранный приложением через `innerHTML`, а не шаблоном): там `${}`
+запекается в markup и не проходит URL-политику; см. «Ограничения» и
+`SECURITY.md`.
 
 ## Файлы
 
@@ -157,7 +156,7 @@ html`<div class="row ${this.state.cls}">${this.state.title}</div>`
   монтируется через `replaceChildren`.
 - `Slot`-проекция: контент из шаблона родителя компилируется с его
   `${}`-значениями, поэтому значение остаётся значением и обновляется при
-  `update()` хоста. Для legacy-хостов — см. «Ограничения».
+  `update()` хоста. Fallback для хостов без исходника — см. «Ограничения».
 
 ## Trusted Types
 
@@ -170,23 +169,22 @@ html`<div class="row ${this.state.cls}">${this.state.title}</div>`
 
 ## Ограничения
 
-1. `Virtual` вне marker-engine: контент парсится строкой, `${}` в нём
-   запекается в markup и не проходит URL-политику — недоверенные значения не
-   передавать.
-2. `Slot` для хоста без скомпилированного исходника (элемент из
-   `innerHTML`/`Virtual`) откатывается на строку `host.template`: `${}` там
-   запечён/потерян, spread не применяется.
-3. Нет comment-маркеров, SSR/hydration и morph-стратегии.
-4. Нет директив `classMap`/`styleMap`/`repeat`/`cache`; есть только
+1. `Slot` для хоста без скомпилированного исходника (элемент, собранный
+   приложением через `innerHTML`) откатывается на строку `host.template`:
+   `${}` там запечён/потерян, spread не применяется.
+2. Нет comment-маркеров, SSR/hydration и morph-стратегии.
+3. Нет директив `classMap`/`styleMap`/`repeat`/`cache`; есть только
    `nothing`/`noChange`/`unsafeHTML`/`unsafeStatic`.
-5. `TemplateResult.toString()` — только диагностика; для рендера —
-   `render()`/`Component.render()`.
+4. У `TemplateResult` нет строковой сериализации: рендер только через
+   `render()`/`Component.render()`. `String(result)` больше не даёт markup.
 
 ## Диагностика
 
 ```js
-window.__VEDA_TEMPLATE_STATS__()
-// {compiles, cacheHits, instances, mounts, patches, componentCreates, domWrites, ...}
-window.__VEDA_TEMPLATE_RESET_STATS__()
 window.__VEDA_TEMPLATE_ENGINE__ // 'templateresult-parts-v3'
+
+// Deprecated: per-host counters removed; only the engine marker and the
+// string-cache size remain.
+getTemplateCacheStats() // {engine, stringCacheSize}
+resetTemplateStats()    // no-op
 ```

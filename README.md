@@ -138,7 +138,7 @@ The framework exports the following modules from `./src/index.js`:
 |  | `computed` | Create computed value | Reactive.js |
 | **Template** | `TemplateResult` | Lit-style value returned by `html` (not a String) | TemplateResult.js |
 |  | `nothing`, `noChange`, `unsafeHTML`, `unsafeStatic` | Lit-style sentinels, trusted markup and trusted static source | TemplateResult.js |
-|  | `getTemplateCacheStats`, `resetTemplateStats`, `clearTemplateCache` | Template cache diagnostics | Template.js |
+|  | `getTemplateCacheStats`, `resetTemplateStats`, `clearTemplateCache` | Template cache diagnostics (counter fields deprecated) | Template.js |
 | **Components** | `Loop` | List rendering with reconciliation | LoopComponent.js |
 |  | `If` | Conditional rendering | IfComponent.js |
 |  | `Context` | Provide reactive values to descendants | ContextComponent.js |

@@ -54,7 +54,7 @@ Loop uses Longest Increasing Subsequence (LIS) algorithm for efficient reorderin
 
 **Best practices:**
 - Use `key` attribute for stable item identity
-- For 10,000+ items, use the `Virtual` component (legacy string path — no `${}` values)
+- For 10,000+ items, use the `Virtual` component (compiled template, same `${}` rules)
 
 ### 2. Virtual Component - Browser Height Limit
 
@@ -249,11 +249,12 @@ this.state.todos = [...this.state.todos]; // Single trigger
 
 ## Security Limitations
 
-In the marker engine `${}` is text/attribute data, never markup; `safe()` is
-only used for legacy string serialization. `Virtual` and the Slot fallback for
-hosts without a compiled template parse author content as a string: `${}`
-there is baked into markup and bypasses the URL policy, so do not pass
-untrusted values. Details and the full policy: [SECURITY.md](./SECURITY.md).
+In the marker engine `${}` is text/attribute data, never markup. `safe()`
+remains available for application code that builds strings by hand, but the
+engine no longer serializes templates into strings. The Slot fallback for hosts
+without a compiled template parses author content as a string: `${}` there is
+baked into markup and bypasses the URL policy, so do not pass untrusted values.
+Details and the full policy: [SECURITY.md](./SECURITY.md).
 
 ---
 
@@ -332,7 +333,6 @@ function TodoList() {
 - ✅ Good for forms and lists up to ~1000 items (`<veda-virtual>` for larger)
 
 **Limitations:**
-- ❌ `Virtual` is a legacy string path, not migrated to the marker engine — do not pass `${}` values through it
 - ❌ Loop reconciliation is keyed with LIS, but frequent reorders of 1000+ items are still costly
 - ❌ Complex expressions in `{expr}` require `unsafe-eval` CSP (use getters for CSP-strict environments)
 

@@ -68,12 +68,13 @@ from a compiled parent template.
 
 ### Legacy String Paths Are the Exception
 
-`Virtual` parses author content from `this.template`/`innerHTML`; the Slot
-fallback does the same for hosts without a compiled template (authored directly
-in the DOM or created by `Virtual`). In both cases `${}` is baked into markup
-at compile time, so it does **not** get the value/URL guarantee. Do not pass
-untrusted values through these paths; use `{expression}`, a child component or
-the marker engine. The rest of this document describes the marker engine.
+The Slot fallback handles hosts without a compiled template — components whose
+author content was written directly into the DOM (`innerHTML`) instead of a
+`html` template. It parses that content as a string, so `${}` there is baked
+into markup at compile time and does **not** get the value/URL guarantee. Do not
+pass untrusted values through this path; use `{expression}`, a child component
+or the marker engine. `Virtual` now renders through the marker engine and is
+covered by the policy. The rest of this document describes the marker engine.
 
 ### Never Use `raw` with User Input
 
