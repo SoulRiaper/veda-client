@@ -990,6 +990,10 @@ function createComponentElement(descriptor, context, host, instance) {
   recordTemplateStat('componentCreates');
   recordComponentTag(tag);
   component.template = descriptor.childLegacy || '';
+  // Kept separately from the legacy string: the raw source still carries
+  // `${}` tokens, so Slot projection can compile it with the parent values and
+  // keep them as values (with the usual URL/attribute policy).
+  component._templateSource = descriptor.childSource || '';
   component._compiledTemplate = descriptor.childCompiled || null;
   component._vedaEvalContext = context;
   component._templateValues = instance.values;

@@ -525,10 +525,32 @@ function resolveTokensToLegacy(source, tokenMap, type, modes) {
   return source.replace(TOKEN_GLOBAL, (_, rawIndex) => {
     const index = Number(rawIndex);
     // A spread slot is applied through the DOM and has no string form. The
-    // legacy string path is only used for Slot projection, which is already
-    // documented as lossy for `${}` values.
+    // legacy string path is kept for components that still render their
+    // author content as a string; it is documented as lossy for `${}` values.
     if (modes?.get(index) === 'spread') return '';
     return stringifyValue(tokenMap.get(index), type);
+  });
+}
+
+/**
+ * Resolve `${}` tokens in a plain string (for example the `slot` attribute of
+ * projected content) against the values of the owning call-site.
+ *
+ * Unlike the legacy path this does not serialize markup: the result is only
+ * used for matching, never inserted into the DOM.
+ *
+ * @internal
+ * @param {string} text
+ * @param {readonly unknown[]} [values]
+ * @returns {string}
+ */
+export function resolveSourceTokens(text, values = []) {
+  if (typeof text !== 'string' || !text.includes(TOKEN_PREFIX)) return text;
+  TOKEN_GLOBAL.lastIndex = 0;
+  return text.replace(TOKEN_GLOBAL, (_, rawIndex) => {
+    const value = values[Number(rawIndex)];
+    if (value == null || value === nothing) return '';
+    return String(value);
   });
 }
 
@@ -878,6 +900,10 @@ function compileSource(source, tokenMap, options = {}) {
           staticAttrs,
           childCompiled,
           childLegacy,
+          // Raw author content with its `${}` tokens intact. Slot projection
+          // compiles it with the component values instead of re-parsing the
+          // baked legacy string, so values never become markup.
+          childSource,
           hasDash,
           hasIs,
           hasProp,
@@ -1027,6 +1053,33 @@ export function compileTemplate(input) {
   stringCache.set(stringSource, compiled);
   trimCache(stringCache, MAX_STRING_CACHE);
   return compiled;
+}
+
+/**
+ * Compile a raw template source that still contains internal `${}` tokens.
+ *
+ * Slot projection needs to render author content that came from a compiled
+ * parent template. The source keeps its tokens and the values belong to the
+ * parent call-site, so the content is compiled with those values instead of
+ * being baked into a markup string: `${}` stays a value (text, attribute or
+ * spread), and the URL/attribute policy applies as usual.
+ *
+ * @internal
+ * @param {string} source
+ * @param {readonly unknown[]} [values]
+ * @returns {CompiledTemplate}
+ */
+export function compileTemplateWithValues(source, values = []) {
+  const text = typeof source === 'string' ? source : String(source ?? '');
+  const tokenMap = new Map();
+  for (let index = 0; index < values.length; index++) tokenMap.set(index, values[index]);
+  const classified = classifyTemplateSource(text, tokenMap);
+  recordTemplateStat('compiles');
+  return compileSource(text, tokenMap, {
+    type: 'html',
+    foldedSource: classified.foldedSource,
+    modes: classified.modes,
+  });
 }
 
 export function clearTemplateCache() {

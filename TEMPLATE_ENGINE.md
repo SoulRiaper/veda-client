@@ -1,10 +1,10 @@
 # Template Engine
 
-Статус: **beta / breaking change**, готовится к релизу 4.0.0; в `master`
-ещё не влит. Движок построен по модели lit-html: шаблон статичен, значения
-пишутся в DOM через Part-ы, а не парсятся как markup. `Component`, `Loop`,
-`If`, `Slot`, `Place`, `Property`, `Relation` и `Value` используют новый
-путь. `Virtual` остаётся на собственном `#prepareChildTemplates`.
+Статус: **release candidate 4.0.0 (breaking)**, ветка `feat/template-result-parts`;
+в `master` ещё не влит. Движок построен по модели lit-html: шаблон статичен,
+значения пишутся в DOM через Part-ы, а не парсятся как markup. `Component`,
+`Loop`, `If`, `Slot`, `Place`, `Property`, `Relation` и `Value` используют
+новый путь. `Virtual` остаётся на собственном `#prepareChildTemplates`.
 Legacy-обходчик `Component._process` удалён в 4.0; рендер всегда идёт через
 скомпилированные шаблоны и Part-ы.
 
@@ -21,6 +21,10 @@ Static-trusted значение нельзя подделать данными: 
 поэтому ни `JSON.parse`, ни объект из сети не могут выглядеть как
 `unsafeStatic()` (Lit защищает `unsafeStatic` ровно так же).
 
+Исключение — **legacy-пути** (`Virtual`, fallback `Slot` для хоста без
+скомпилированного исходника): там `${}` запекается в markup и не проходит
+URL-политику; см. «Ограничения» и `SECURITY.md`.
+
 ## Файлы
 
 | Файл | Назначение |
@@ -33,15 +37,10 @@ Static-trusted значение нельзя подделать данными: 
 | `src/template/factories.js` | поздняя регистрация фабрик встроенных компонентов |
 | `src/template/stats.js` | диагностические счётчики |
 
-`BindingStrategy`/`PathBindingStrategy` удалены: стратегия фиксирована
-marker-based. Это breaking change.
-
 ## Публичный контракт
 
 ```js
-import {
-  html, render, unsafeStatic, unsafeHTML, nothing, noChange,
-} from 'veda-client';
+import {html, render, unsafeStatic, unsafeHTML, nothing, noChange} from 'veda-client';
 
 const row = (item) => html`<div class="row ${item.cls}">${item.title}</div>`;
 render(row({cls: 'a', title: 'Ada'}), document.querySelector('#app'));
@@ -51,20 +50,16 @@ const tag = unsafeStatic('my-row');
 html`<${tag} ${unsafeStatic('data-kind')}="row"></${tag}>`;
 ```
 
-- `html` возвращает `TemplateResult`, **не** `String`.
-- `String(result)`/`result.toString()` остаются только как deprecated
-  диагностический сериализатор. Для рендера используйте `render()` или
-  `Component.render()`.
-- `render(result, container)` — Lit-style точка входа: первый рендер
-  монтирует шаблон, повторный с тем же call-site патчит DOM.
-- `nothing` очищает позицию, `noChange` оставляет предыдущее значение.
-- `unsafeHTML(value)` вставляет доверенный markup. Обычные строки всегда
-  являются текстом.
-- `unsafeStatic(value)` — доверенная статика: имя тега, имя атрибута, `is`.
-  Значение попадает в исходник шаблона до парсинга, поэтому **никогда** не
-  передавайте туда ввод пользователя.
-- `raw` по-прежнему возвращает строку. `${raw`...`}` в `html` — это текст;
-  если нужен markup из значения, используйте `unsafeHTML`.
+- `html` возвращает `TemplateResult`, а не строку; `render()` или
+  `Component.render()` монтируют и патчат результат.
+- `nothing` очищает позицию, `noChange` оставляет прежнее значение,
+  `unsafeHTML()` вставляет доверенный markup.
+- `unsafeStatic()` — доверенный исходник (имя тега/атрибута, `is`); ввод
+  пользователя туда передавать нельзя.
+- `raw` возвращает строку: `${raw`...`}` — текст, для markup нужен
+  `unsafeHTML()`.
+
+Полный список API и оговорки — в [API.md](./API.md).
 
 ## Маркеры и Part-ы
 
@@ -132,38 +127,18 @@ html`<div class="row ${this.state.cls}">${this.state.title}</div>`
 | Статический `on*`-атрибут или `srcdoc` в шаблоне | **ошибка компиляции**: `{expression}` / `unsafeHTML()` |
 | `:srcdoc`, `:on*`, `:innerHTML`, `:outerHTML` | **ошибка компиляции**: HTML-синки только через `unsafeHTML()` |
 
-`${attrs}` принимает **объект** (или `Map`), а не строку:
-
-```js
-html`<button ${this.state.buttonAttrs}>go</button>`
-// {class: 'primary', '?disabled': true, '@click': this.onClick,
-//  'aria-label': 'Go', '.value': 'x'}
-```
-
-- `name` — атрибут через `setAttribute`;
-- `?name` — boolean-атрибут (`true`/`false`);
-- `@name` — listener, значение обязано быть функцией;
-- `.name` — свойство самого элемента (не `state` компонента).
-
-Ключи, которых не стало в объекте, удаляются со следующего обновления.
-Из данных запрещены: `on*` (только `@`), `srcdoc`, `innerHTML`/`outerHTML`,
-framework-атрибуты (`items`, `condition`, `key`, `as`, `item-key`,
-`height`, `item-height`, `overscan`), `bind`, `ref`, `about`, `property`,
-`rel`, `is`, `slot` и namespace `data-veda-*`. `javascript:`/`vbscript:`
-URL-значения отвергаются (в том числе записанные через `{expr}`).
+`${attrs}` принимает **объект** (или `Map`): `name`, `?bool`, `.prop`,
+`@event`; исчезнувшие ключи удаляются. Запреты и URL-политика —
+[SECURITY.md](./SECURITY.md), полный синтаксис — [API.md](./API.md).
 
 ## Кеш
 
-- `WeakMap<TemplateStringsArray, Map<shape, CompiledTemplate>>` — один
-  call-site компилируется один раз.
-- `shape` учитывает только static-trusted значения (имена тегов, атрибутов,
-  `is`). Динамические `${}` и spread-объекты новый шаблон не создают.
-- `shape` также учитывает, стал ли attr-name-слот именем или spread-слотом,
-  поэтому такие call-site переклассифицируются на каждый вызов.
-- `Map<string, CompiledTemplate>` (LRU, 1000) — для шаблонов-строк,
-  включая `html('...')`.
-- `ExpressionParser` кеширует скомпилированные безопасные/сложные выражения
-  (2000 записей).
+- `WeakMap<TemplateStringsArray, Map<shape, CompiledTemplate>>`: один
+  call-site компилируется один раз; shape учитывает static-trusted значения
+  (имена, `is`), поэтому динамические `${}` новый шаблон не создают.
+- `Map<string, CompiledTemplate>` (LRU, 1000) — для шаблонов-строк, включая
+  `html('...')`.
+- `ExpressionParser` кеширует скомпилированные выражения (2000 записей).
 
 ## Lifecycle и значения
 
@@ -180,6 +155,9 @@ URL-значения отвергаются (в том числе записан
   эффекты/слушатели, но `textContent` не меняется.
 - При смене шаблона старый `TemplateInstance` уничтожается, новый
   монтируется через `replaceChildren`.
+- `Slot`-проекция: контент из шаблона родителя компилируется с его
+  `${}`-значениями, поэтому значение остаётся значением и обновляется при
+  `update()` хоста. Для legacy-хостов — см. «Ограничения».
 
 ## Trusted Types
 
@@ -187,17 +165,22 @@ URL-значения отвергаются (в том числе записан
 `veda-template` (`createHTML`), как lit-html делает со своей политикой
 `lit-html`. Это позволяет работать под
 `Content-Security-Policy: require-trusted-types-for 'script'`.
+`unsafeHTML()` пишет строку в `innerHTML` напрямую; под этим CSP его
+нужно пропускать через ту же политику или использовать `TrustedHTML`.
 
 ## Ограничения
 
-1. `Virtual` вне marker-engine.
-2. `Slot`-проекция использует legacy-строку `host.template`; `${}` и spread
-   внутри спроецированного контента остаются запечёнными/потерянными.
+1. `Virtual` вне marker-engine: контент парсится строкой, `${}` в нём
+   запекается в markup и не проходит URL-политику — недоверенные значения не
+   передавать.
+2. `Slot` для хоста без скомпилированного исходника (элемент из
+   `innerHTML`/`Virtual`) откатывается на строку `host.template`: `${}` там
+   запечён/потерян, spread не применяется.
 3. Нет comment-маркеров, SSR/hydration и morph-стратегии.
 4. Нет директив `classMap`/`styleMap`/`repeat`/`cache`; есть только
    `nothing`/`noChange`/`unsafeHTML`/`unsafeStatic`.
-5. `TemplateResult.toString()` — только диагностика; не используйте
-   `innerHTML = html` как способ рендера.
+5. `TemplateResult.toString()` — только диагностика; для рендера —
+   `render()`/`Component.render()`.
 
 ## Диагностика
 
@@ -207,15 +190,3 @@ window.__VEDA_TEMPLATE_STATS__()
 window.__VEDA_TEMPLATE_RESET_STATS__()
 window.__VEDA_TEMPLATE_ENGINE__ // 'templateresult-parts-v3'
 ```
-
-## Проверка
-
-- `npm run test:unit` — 751 тестов.
-- `npm run test:benchmark` — 22 бенчмарка.
-- `test/TemplateEngine.test.js` — кеш, markers, patch, дочерние компоненты,
-  refs, nested TemplateResult, `nothing`/`noChange`/`unsafeHTML`,
-  `unsafeStatic`, spread, `render()`, `is`/script/style/framework-attr/URL
-  ошибки.
-- `test/Security.test.js` — данные не становятся markup или capability:
-  entity-скобки, `items`/`condition` из данных, подмена маркера, `on*`,
-  `srcdoc`, `javascript:`.

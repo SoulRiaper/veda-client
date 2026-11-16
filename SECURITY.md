@@ -62,6 +62,19 @@ but not:
 written with `{expression}`. Other URLs (`https://`, relative, `mailto:`) are
 the application's responsibility, as in any framework.
 
+The guard lives in the Part writer, so it covers every value the marker engine
+renders — including `${}` projected through `Slot` when the host content comes
+from a compiled parent template.
+
+### Legacy String Paths Are the Exception
+
+`Virtual` parses author content from `this.template`/`innerHTML`; the Slot
+fallback does the same for hosts without a compiled template (authored directly
+in the DOM or created by `Virtual`). In both cases `${}` is baked into markup
+at compile time, so it does **not** get the value/URL guarantee. Do not pass
+untrusted values through these paths; use `{expression}`, a child component or
+the marker engine. The rest of this document describes the marker engine.
+
 ### Never Use `raw` with User Input
 
 `raw` still returns a plain string that is compiled as template source, so a

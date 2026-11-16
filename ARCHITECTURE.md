@@ -254,73 +254,57 @@ for (const [key, {element}] of this.#itemsMap) {
 }
 ```
 
-**Phase 3: Add/Reorder Items** - O(n²) worst case
+**Phase 3: Reorder with LIS** - O(n log n) positions, O(n) DOM moves
 ```javascript
-let previousElement = null;
+// positions of the new keys in the old order
+const positions = [];
+for (const key of newKeys) {
+  if (oldKeySet.has(key)) positions.push(oldKeyIndex.get(key));
+}
 
-newItems.forEach((item, index) => {
-  const key = getKey(item, keyAttr, index);
+// keys already in a valid relative order do not move
+const stablePositions = new Set(
+  this.#longestIncreasingSubsequence(positions).map(i => positions[i]),
+);
+const stableKeys = new Set(
+  newKeys.filter(key => stablePositions.has(oldKeyIndex.get(key))),
+);
 
-  // Get or create item data
-  let itemData = this.#itemsMap.get(key);
-  if (!itemData) {
-    // Create new element (O(1))
-    const element = this.#createItemElement(item);
-    itemData = {element, item};
-    this.#itemsMap.set(key, itemData);
-  } else if (itemData.item !== item) {
-    // Update existing (O(1))
-    this.#updateItemElement(itemData.element, item);
-    itemData.item = item;
+// walk backwards and place each unstable element before its successor
+let nextSibling = null;
+for (let i = newKeys.length - 1; i >= 0; i--) {
+  const key = newKeys[i];
+  const element = this.#itemsMap.get(key)?.element;
+  if (!element) continue;
+  if (!oldKeySet.has(key) || !stableKeys.has(key)) {
+    this.insertBefore(element, nextSibling); // insertBefore(el, null) === append
   }
-
-  // Reorder if needed (O(n) DOM traversal)
-  const {element} = itemData;
-  if (previousElement) {
-    if (previousElement.nextSibling !== element) {
-      previousElement.after(element); // DOM reorder
-    }
-  } else {
-    if (this.firstChild !== element) {
-      this.insertBefore(element, this.firstChild);
-    }
-  }
-
-  previousElement = element;
-});
+  nextSibling = element;
+}
 ```
+
+The real implementation skips a move when the element already sits before
+`nextSibling` (`element.nextSibling !== nextSibling`). The map is then rebuilt
+in the new order (`#rememberOrder`), so the next reconcile sees the order that
+was just applied.
 
 **Complexity Analysis:**
 
 | Operation | Complexity | Measured (500 items) | Notes |
 |-----------|-----------|---------------------|-------|
-| Add items | O(n) | ~9ms | Create n new elements |
+| Add items | O(n) | ~11ms | Create n new elements |
 | Remove items | O(m) | ~8ms | Remove m old elements |
-| Update items | O(n) | ~7ms | Update n changed items |
-| Reorder items | O(n²) | ~17ms | Naive sequential insertion |
-| Total | O(n²) | ~17ms | Dominated by reordering |
+| Update items | O(n) | ~11ms | Update n changed items |
+| Reorder items | O(n log n) | ~21ms | LIS keeps already ordered nodes in place |
 
-**Benchmark Results:**
-- 100 items reorder: 2.31ms
-- 500 items reorder: 17.24ms
-- 1000 items reorder: 53.62ms
-- Scaling factor: ~0.05ms per item² (quadratic)
+**Benchmark Results (2026-11-16, 4.0.0):**
+- 100 items reorder: 3.59ms
+- 500 items reorder: 20.98ms
+- 1000 items reorder: 48.40ms
 
-**Why O(n²) for reordering:**
-
-Each `insertBefore()` or `after()` call may traverse the DOM tree to find the insertion point. For a complete reorder (e.g., reverse), this becomes O(n²).
-
-**Comparison with LIS (Longest Increasing Subsequence):**
-
-| Algorithm | Best Case | Worst Case | Memory |
-|-----------|-----------|------------|--------|
-| Current (naive) | O(n) | O(n²) | O(n) |
-| LIS-based | O(n log n) | O(n log n) | O(n) |
-
-**Why not LIS (yet)?**
-- MVP simplicity - naive algorithm is easier to understand and debug
-- Performance acceptable for < 500 items (typical use case)
-- Can optimize later if benchmarks show need
+**Why LIS:** only nodes outside the longest increasing subsequence move, so a
+sort or a single insertion produces the minimum number of DOM moves. Reordering
+remains the most expensive Loop operation, but it is no longer quadratic.
 
 **Memory Usage:**
 - `#itemsMap`: O(n) - stores element references
@@ -344,8 +328,7 @@ if (newItemsMap.has(key)) {
 
 Duplicate keys are logged but don't break reconciliation. Last item with duplicate key wins.
 
-**Algorithm:** O(n) for additions/removals, O(n²) for reordering
-**Why not LIS?** MVP simplicity. May optimize if benchmarks show need.
+**Algorithm:** O(n) for additions/removals, O(n log n) for reordering via LIS.
 
 ## Data Layer
 
@@ -417,15 +400,15 @@ state.c = 3;  // Queued
 
 | Operation | Complexity | Measured | Notes |
 |-----------|-----------|----------|-------|
-| Property access | O(1) | 0.16μs | Proxy overhead ~10% |
-| Effect trigger | O(n) | 1.1ms/1000 | n = dependent effects |
-| Loop add/remove | O(n) | 8-9ms/500 | n = items |
-| Loop reorder | O(n²) | 17ms/500 | Naive algorithm |
+| Property access | O(1) | 0.17μs | Proxy overhead ~10% |
+| Effect trigger | O(n) | 0.9ms/1000 | n = dependent effects |
+| Loop add/remove | O(n) | 8-11ms/500 | n = items |
+| Loop reorder | O(n log n) | 21ms/500 | LIS algorithm |
 | Computed access | O(1) | <0.001ms | When cached |
-| Component create | O(1) | 0.27ms | Per component |
-| Component update | O(1) | 0.001ms | Per update |
+| Component create | O(1) | 0.12ms | Per component |
+| Component update | O(1) | 0.002ms | Per update |
 
-**Benchmark source:** `test/benchmarks/LoopPerformance.test.js` and `test/benchmarks/Performance.test.js`
+**Benchmark source:** `test/benchmarks/LoopPerformance.test.js` and `test/benchmarks/Performance.test.js` (2026-11-16 run)
 
 ## Comparison with Other Frameworks
 
@@ -433,7 +416,7 @@ state.c = 3;  // Queued
 |---------|------|-------|----------|-------|
 | Reactivity | Proxy | Proxy | Signals | Hooks |
 | Updates | Fine-grained | VDOM | Fine-grained | VDOM |
-| Bundle | ~50 KB | ~80 KB | ~15 KB | ~130 KB |
+| Bundle | ~41 KB (gzip) | ~80 KB | ~15 KB | ~130 KB |
 | API | Simple | Medium | Simple | Complex |
 | RDF Support | Native | Plugin | Plugin | Plugin |
 

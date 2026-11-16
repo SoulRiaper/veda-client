@@ -17,7 +17,7 @@
 - ✅ 100/100 tests passing
 - ✅ Comprehensive documentation
 
-**Bundle size:** ~50 KB browser, ~85 KB Node.js (acceptable for MVP)
+**Bundle size:** ~41 KB gzipped (~133 KB minified) in the 4.0.0 build
 
 ---
 
@@ -199,7 +199,7 @@
 - [ ] **Medium List (Core)**
   - 100-200 items
   - Filtering, sorting
-  - No virtualization
+  - No virtualization (plain Loop)
   - Validate: performance acceptable
 
 - [ ] **Large Table (React Adapter)**
@@ -336,17 +336,17 @@
 
 ## 🚧 Current Status
 
-**Current Branch:** `feat/template-result-parts` (v4.0.0 in progress: marker-based template engine)
+**Current Branch:** `feat/template-result-parts` (4.0.0 release candidate: marker-based template engine)
 
-**Status:** Phase 1 COMPLETED ✅
+**Status:** 3.0.0 released; 4.0.0 is in progress on the branch above.
 
 **Completed:**
 1. ✅ ROADMAP.md created and maintained
 2. ✅ All critical bugs fixed (Phase 1.1)
 3. ✅ TypeScript types complete (Phase 1.2)
 4. ✅ Comprehensive documentation (Phase 1.3)
-5. ✅ 751 unit tests passing
-6. ✅ Production-ready status achieved
+5. ✅ Unit test suite green (`npm run test:unit`)
+6. ✅ 3.0.0 released; 4.0.0 marker engine green on unit tests, build and benchmarks
 
 **Next Steps:**
 - Phase 2: React Adapter (optional, on-demand)
@@ -376,5 +376,5 @@ To contribute:
 
 **Last updated:** November 2026
 **Version:** 4.0.0
-**Status:** Phase 1 Complete - v4.0.0 in progress (marker-based template engine, not released yet)
+**Status:** 3.0.0 released; 4.0.0 release candidate on `feat/template-result-parts` (not merged or tagged yet)
 

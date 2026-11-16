@@ -1,6 +1,6 @@
 import Component from './Component.js';
 import {toRaw} from '../Reactive.js';
-import {compileTemplate} from '../template/Template.js';
+import {compileTemplate, compileTemplateWithValues, resolveSourceTokens} from '../template/Template.js';
 
 const MAX_TREE_DEPTH = 20;
 
@@ -25,6 +25,7 @@ export default function SlotComponent(Class = HTMLElement) {
     static tag = 'veda-slot';
 
     #host = null;
+    #registeredHost = null;
     #isDisconnected = false;
     #instance = null;
     #instanceKey = null;
@@ -45,6 +46,7 @@ export default function SlotComponent(Class = HTMLElement) {
     disconnectedCallback() {
       if (this.#isDisconnected) return;
       this.#isDisconnected = true;
+      this.#stopListeningHost();
       this.#instance?.destroy();
       this.#instance = null;
       this.#instanceKey = null;
@@ -67,6 +69,13 @@ export default function SlotComponent(Class = HTMLElement) {
       if (this.isConnected) this.#mount();
     }
 
+    // The layout host is a component, not an instance of this Slot: when its
+    // parent updates the host values, the Slot still has to patch the projected
+    // content. The host keeps its slots in a Set and calls this method.
+    _onHostValuesChanged() {
+      if (this.isConnected) this.#mount();
+    }
+
     render() {}
 
     post() {
@@ -78,16 +87,22 @@ export default function SlotComponent(Class = HTMLElement) {
 
       const host = this.#host;
       if (!host) {
+        this.#stopListeningHost();
         this.replaceChildren();
         return;
       }
+      this.#listenToHost(host);
 
       const name = this.getAttribute('name') || 'default';
       const projection = this.#buildProjection(host, name);
       const evalContext = projection.hasProjected
         ? host._vedaEvalContext || host
         : host;
-      const values = projection.hasProjected ? [] : (this._templateValues || []);
+      // Projected content belongs to the parent template, so its `${}` values
+      // are the host values. The Slot fallback belongs to this layout.
+      const values = projection.hasProjected
+        ? (host._templateValues || [])
+        : (this._templateValues || []);
       const key = `${projection.hasProjected ? 'p' : 'f'}|${name}|${projection.key}`;
 
       if (
@@ -111,7 +126,12 @@ export default function SlotComponent(Class = HTMLElement) {
 
       this._vedaRefsTarget = this.#refsOwner(evalContext, host);
       try {
-        const compiled = projection.compiled || compileTemplate(projection.markup);
+        let compiled = projection.compiled;
+        if (!compiled) {
+          compiled = projection.hasProjected
+            ? compileTemplateWithValues(projection.markup, values)
+            : compileTemplate(projection.markup);
+        }
         const instance = compiled.instantiate(
           evalContext,
           this,
@@ -127,9 +147,33 @@ export default function SlotComponent(Class = HTMLElement) {
       }
     }
 
+    // The layout host is a component. It keeps a Set of the slots that project
+    // its author content and notifies them when its `${}` values change.
+    #listenToHost(host) {
+      if (this.#registeredHost === host) return;
+      this.#stopListeningHost();
+      if (!host) return;
+      if (!host._vedaSlotListeners) host._vedaSlotListeners = new Set();
+      host._vedaSlotListeners.add(this);
+      this.#registeredHost = host;
+    }
+
+    #stopListeningHost() {
+      const host = this.#registeredHost;
+      if (!host) return;
+      host._vedaSlotListeners?.delete(this);
+      this.#registeredHost = null;
+    }
+
     #buildProjection(host, name) {
+      // Prefer the raw author source, which still carries `${}` tokens: it is
+      // compiled with the host values below, so values stay values. A host
+      // without a compiled source (authored directly in the DOM, or created by
+      // the legacy Virtual path) falls back to its baked template string.
+      const source = host._templateSource ?? host.template;
+      const values = host._templateValues || [];
       const tpl = document.createElement('template');
-      tpl.innerHTML = host.template || '';
+      tpl.innerHTML = source || '';
 
       const fragment = document.createDocumentFragment();
       let hasProjectedContent = false;
@@ -142,7 +186,9 @@ export default function SlotComponent(Class = HTMLElement) {
           continue;
         }
         if (child.nodeType !== Node.ELEMENT_NODE) continue;
-        const slotName = child.getAttribute('slot') || 'default';
+        // A `${}` in the slot attribute is a value, not markup: resolve it for
+        // matching only, then drop the attribute from the projected clone.
+        const slotName = resolveSourceTokens(child.getAttribute('slot') || 'default', values);
         if (slotName !== name) continue;
         child.removeAttribute('slot');
         fragment.appendChild(child.cloneNode(true));

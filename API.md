@@ -1401,49 +1401,30 @@ class MyComponent extends Component(HTMLElement) {
 ### Template API (breaking)
 
 ```js
-import {
-  html, render, unsafeStatic, unsafeHTML, nothing, noChange,
-} from 'veda-client';
+import {html, render, unsafeStatic, unsafeHTML, nothing, noChange} from 'veda-client';
 
 const view = (name) => html`<div class="greeting">${name}</div>`;
 render(view('Ada'), document.querySelector('#app'));
 ```
 
-- `html` returns a `TemplateResult` object, **not** a String. Use `render()`
-  or return it from `Component.render()`.
-- `render(result, container)` mounts on the first call and patches in place
-  when the compiled template is unchanged.
-- `nothing` removes the value at that position; `noChange` keeps the previous
-  value; `unsafeHTML(value)` renders trusted markup. Ordinary strings are
-  always text.
-- **A value never becomes markup.** `${}` is supported in text, attribute
-  values and spread slots. A tag name or attribute name must be authored, or
-  passed through `unsafeStatic(value)` (trusted static source, never user
-  input) or a Component class that declares its own `static tag`. A class
-  without its own `static tag` is an error instead of silently compiling to
-  `veda-component`.
-- `${attrs}` takes an **object** (or `Map`), applied through the DOM API:
-  `name` sets an attribute, `?name` a boolean, `.name` a property, `@name` an
-  event listener (function). Keys that disappear are removed on the next
-  update. Strings are rejected — markup is never parsed from a value.
-- Data may not set `on*` content attributes, `srcdoc`, `innerHTML`/
-  `outerHTML`, framework attributes (`items`, `condition`, `key`, `as`,
-  `item-key`, `height`, `item-height`, `overscan`), `bind`, `ref`, `about`,
-  `property`, `rel`, `is`, `slot` or the reserved `data-veda-*` namespace.
-- `javascript:`/`vbscript:` URL values are refused when written to `href`,
-  `src`, `action`, `formaction` and similar attributes.
-- `${}` is **not** supported in `<script>`/`<style>`, HTML comments or nested
-  `<template>` content — values never enter markup. `key`/`as`/height are
-  static framework configuration, `ref` is a static name, and
-  `items`/`condition`/`bind`/`on*` take `{expression}`.
-- A static (non-expression) `on*` attribute, a `srcdoc` attribute, and the
-  `:srcdoc`/`:on*`/`:innerHTML`/`:outerHTML` property bindings are compile
-  errors. Use `{expression}` for handlers and `unsafeHTML()` for trusted
-  markup.
-- `TemplateResult` is marker-based; a `ChildPart` inserts nodes before its
-  own marker, so one structured value cannot shift a sibling Part. Marker
-  names are randomized per page load.
-- `PathBindingStrategy`/`BindingStrategy` were removed in this release.
+- `html` returns a `TemplateResult` object, not a String; use `render()` or
+  return it from `Component.render()`.
+- A value never becomes markup in the marker engine: `${}` is text, an
+  attribute value or a spread entry. Tag/attribute names need an authored
+  name, a Component class with its own `static tag`, or `unsafeStatic()`.
+- `${attrs}` takes an object/`Map` (`name`, `?bool`, `.prop`, `@event`);
+  strings are rejected. Data cannot set `on*`, `srcdoc`, `innerHTML`, framework
+  attributes or `data-veda-*`.
+- `nothing` removes the value at that position, `noChange` keeps the previous
+  one, `unsafeHTML()` renders trusted markup.
+- `${}` in `<script>`/`<style>`/comments/nested `<template>`, static `on*` or
+  `srcdoc`, and `:srcdoc`/`:on*`/`:innerHTML`/`:outerHTML` are compile errors.
+- Script URLs (`javascript:`/`vbscript:`) are refused for URL attributes.
+
+Slotted `${}` values use the same compiler and policy; `Virtual` and the Slot
+fallback for hosts without a compiled template are legacy string paths — see
+[SECURITY.md](./SECURITY.md#legacy-string-paths-are-the-exception).
+Engine details and limitations — [TEMPLATE_ENGINE.md](./TEMPLATE_ENGINE.md).
 
 ### Effect Cleanup Timing
 
@@ -1634,8 +1615,8 @@ class TodoItem extends Component(HTMLElement) {
 - **Duplicate keys warning:** Items must have unique key values
 - **Static attributes:** `as` and `key` must be static strings
 - Source array must be reactive
-- Naive reconciliation (O(n²) for reordering)
-- No virtualization
+- Keyed reconciliation uses LIS reordering (O(n log n)); frequent reorders of 1000+ items are still costly
+- Use the `<veda-virtual>` component for very large lists; its content is a legacy string path (no `${}` values, see the Template API section above)
 
 **Common Issues and Solutions:**
 
@@ -1745,25 +1726,21 @@ get currentPage() {
 
 | Operation | Time Complexity | Measured (500 items) | Notes |
 |-----------|----------------|---------------------|-------|
-| Add new items | O(n) | ~9ms | Create n new DOM elements |
+| Add new items | O(n) | ~11ms | Create n new DOM elements |
 | Remove items | O(m) | ~8ms | Remove m DOM elements |
-| Update items | O(n) | ~7ms | Update n changed elements |
-| Reorder items | O(n²) | ~17ms | Naive sequential insertion |
+| Update items | O(n) | ~11ms | Update n changed elements |
+| Reorder items | O(n log n) | ~21ms | LIS keeps ordered nodes in place |
 | Lookup by key | O(1) | <0.01ms | Uses Map for key lookup |
 
-**Detailed benchmarks:**
-- 100 items reorder: 2.31ms (excellent)
-- 500 items reorder: 17.24ms (good)
-- 1000 items reorder: 53.62ms (noticeable)
-
-See `test/benchmarks/LoopPerformance.test.js` for complete measurements.
+Full numbers: [BENCHMARKS.md](./BENCHMARKS.md); the measurement source is
+`test/benchmarks/LoopPerformance.test.js`.
 
 **Recommendations:**
 - Always provide `key` for efficient reconciliation
 - Keep lists under 500 items for optimal performance
 - Use pagination for large datasets (1000+ items)
 - Avoid frequent reordering of large lists
-- Consider virtual scrolling for very large lists (see LIMITATIONS.md)
+- Use `<veda-virtual>` for very large lists (see LIMITATIONS.md)
 
 **Important - Template Structure:**
 
@@ -2259,57 +2236,21 @@ Component (base)
 3. **Custom rendering** - Supports custom HTML structure for rendering values
 4. **Shadow DOM support** - Optional style isolation via `shadow` attribute
 
-**Implementation details:**
+**Implementation (4.0):**
+
+- `added()` tracks `this.state.model[this.prop]` in an effect; the first run is
+  skipped because `connectedCallback` already rendered.
+- `render()` rebuilds all values when the value count changes, otherwise it
+  patches only changed indexes.
+- Each `#valueEntries[i]` stores `{value, nodes, cleanup, instance}`; unchanged
+  values keep their nodes and `TemplateInstance`, so focus/state survive.
+- `renderValue(value, container, index)` writes one value and may return a
+  cleanup function or `{cleanup, instance}` for custom markup
+  (`Property`/`Relation` use this to keep a `CompiledTemplate` instance).
 
 ```javascript
-export default function ValueComponent (Class = HTMLElement) {
-  return class ValueComponentClass extends Component(Class) {
-    #propEffect = null;
-    #valueNodes = new Map();
-
-    added() {
-      this.prop = this.getAttribute('property') ?? this.getAttribute('rel');
-
-      // Create reactive effect
-      if (!this.#propEffect) {
-        this.#propEffect = effect(() => {
-          this.render();
-        });
-      }
-    }
-
-    removed() {
-      // Cleanup
-      if (this.#propEffect) {
-        this.#propEffect();
-        this.#propEffect = null;
-      }
-      this.#valueNodes.clear();
-    }
-
-    render() {
-      const container = this.hasAttribute('shadow')
-        ? this.shadowRoot ?? (this.attachShadow({mode: 'open'}), this.shadowRoot)
-        : this;
-
-      const values = this.model.hasValue(this.prop)
-        ? (Array.isArray(this.model[this.prop]) ? this.model[this.prop] : [this.model[this.prop]])
-        : [];
-
-      container.replaceChildren();
-      this.#valueNodes.clear();
-
-      values.forEach((value, index) => {
-        this.renderValue(value, container, index);
-      });
-    }
-
-    renderValue(value, container, index) {
-      const node = document.createTextNode(value.toString());
-      container.appendChild(node);
-      this.#valueNodes.set(index, {value, node});
-    }
-  };
+renderValue(value, container, index) {
+  container.appendChild(document.createTextNode(value.toString()));
 }
 ```
 
@@ -2379,16 +2320,18 @@ constructor → added() → render() → renderValue()
 
 **Memory management:**
 
-- Uses `#propEffect` private field to store effect cleanup function
-- Uses `#valueNodes` Map to track rendered nodes
-- Both cleaned up in `removed()` lifecycle method
+- Uses `#propEffect` private field to store the effect cleanup function
+- Uses `#valueEntries` to track each value's nodes, cleanup and template instance
+- `#clearValues()` releases them from `removed()` and before a full re-render
+- Unchanged values keep their nodes and TemplateInstances across updates
 - No memory leaks due to proper cleanup
 
 **Performance notes:**
 
 - Creates one effect per component instance
-- Effect tracks `this.model[this.prop]` access
-- Re-renders only when tracked property changes
+- Effect tracks `this.state.model[this.prop]` access
+- Re-renders only when the tracked property or the value array changes
+- Reuses unchanged value nodes instead of replacing the whole list
 - Does NOT re-render on unrelated model changes
 
 **Testing ValueComponent:**

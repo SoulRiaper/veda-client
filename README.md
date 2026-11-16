@@ -8,9 +8,9 @@ A lightweight reactive framework for building semantic web applications with fin
 - 🧩 **Web Components** - Built on native Custom Elements API
 - 🔗 **Semantic data** - First-class RDF/linked data model support
 - 📝 **Declarative templates** - JSX-like syntax with reactive expressions
-- 🔄 **Built-in components** - Loop, If, Property, Relation components
+- 🔄 **Built-in components** - Loop, If, Slot, Place, Virtual, Context, Property, Relation components
 - ♻️ **Circular references** - Automatic handling for RDF graph structures
-- 📦 **Minimal footprint** - ~50 KB browser bundle, ~85 KB with Node.js (includes ws)
+- 📦 **Minimal footprint** - ~41 KB gzipped (~133 KB minified, Node build includes ws)
 - 🎨 **TypeScript** - Full type definitions included
 
 ## Quick Start
@@ -141,6 +141,10 @@ The framework exports the following modules from `./src/index.js`:
 |  | `getTemplateCacheStats`, `resetTemplateStats`, `clearTemplateCache` | Template cache diagnostics | Template.js |
 | **Components** | `Loop` | List rendering with reconciliation | LoopComponent.js |
 |  | `If` | Conditional rendering | IfComponent.js |
+|  | `Context` | Provide reactive values to descendants | ContextComponent.js |
+|  | `Slot` | Project author content into named layout holes | SlotComponent.js |
+|  | `Place` | Move rendered nodes to another container | PlaceComponent.js |
+|  | `Virtual` | Windowed list rendering (legacy string path) | VirtualComponent.js |
 | **Data** | `Model` | RDF/semantic data model | Model.js |
 |  | `Backend` | Backend API communication | Backend.js |
 |  | `Subscription` | WebSocket subscriptions | Subscription.js |
@@ -226,9 +230,9 @@ Requires:
 
 ## Bundle Size
 
-- **Browser**: ~50 KB (minified, without ws)
-- **Node.js**: ~85 KB (minified, includes ws for WebSocket support)
-- Both versions are bundled and tree-shakeable
+- **Current build** (`npm run build`): ~133 KB minified, ~41 KB gzipped
+- The bundle includes `ws` for WebSocket support; a browser-only build can drop it
+- Bundled by esbuild; ES modules remain tree-shakeable
 
 ## Testing
 

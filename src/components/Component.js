@@ -198,6 +198,25 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
         this.#instance.setValues(values);
       }
       this._onTemplateValuesChanged(values);
+      this.#notifySlotListeners();
+    }
+
+    // Slots project this component's author content, so they need the new
+    // parent values even when this component renders its own template.
+    #notifySlotListeners() {
+      const listeners = this._vedaSlotListeners;
+      if (!listeners?.size) return;
+      for (const slot of [...listeners]) {
+        if (!slot.isConnected) {
+          listeners.delete(slot);
+          continue;
+        }
+        try {
+          slot._onHostValuesChanged?.();
+        } catch (error) {
+          console.warn('Slot: failed to update projected values:', error?.message ?? error);
+        }
+      }
     }
 
     _onTemplateValuesChanged() {}
