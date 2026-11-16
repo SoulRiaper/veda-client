@@ -336,9 +336,9 @@
 
 ## 🚧 Current Status
 
-**Current Branch:** `refactor/template-legacy-cleanup` (4.0.0 release candidate: marker-based template engine)
+**Current Branch:** `master` (4.0.0: marker-based template engine)
 
-**Status:** 3.0.0 released; 4.0.0 is in a release candidate on the branch above.
+**Status:** 3.0.0 released; 4.0.0 merged to `master` (not tagged yet).
 
 **Completed:**
 1. ✅ ROADMAP.md created and maintained
@@ -376,5 +376,5 @@ To contribute:
 
 **Last updated:** November 2026
 **Version:** 4.0.0
-**Status:** 3.0.0 released; 4.0.0 release candidate on `refactor/template-legacy-cleanup` (not merged or tagged yet)
+**Status:** 3.0.0 released; 4.0.0 merged to `master` (not tagged yet)
 

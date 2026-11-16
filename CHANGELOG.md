@@ -5,9 +5,7 @@ All notable changes to Veda Client Framework will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-_Prepared as 4.0.0. Not merged to `master` yet._
+## [4.0.0] - 2026-11
 
 ### Breaking
 - `html` returns a `TemplateResult` object, not a string. Mount it with
@@ -21,8 +19,9 @@ _Prepared as 4.0.0. Not merged to `master` yet._
 - `Slot` no longer re-parses a host's `template`/`innerHTML` string and no longer
   projects hosts that were assembled outside a template. Author such hosts with
   `html`; everything projected now comes from the host's compiled template.
-- All `innerHTML` writes in the engine (compiler, `Slot`, `unsafeHTML()`) go
-  through the `veda-template` Trusted Types policy; there is no direct sink left.
+- Every `innerHTML` write in the engine (the compiler and `unsafeHTML()`) goes
+  through the `veda-template` Trusted Types policy; `Slot` no longer writes
+  markup at all, so there is no direct sink left.
 - Values never become markup: `${}` is a text/attribute/spread value. Tag and
   attribute names require an authored name, a Component class with its own
   `static tag`, or `unsafeStatic()`; everything else throws.
@@ -36,6 +35,11 @@ _Prepared as 4.0.0. Not merged to `master` yet._
   values written with `{expression}`.
 - `Component._process()` and its legacy helpers were removed; rendering goes
   through compiled templates, and `post()` no longer receives the fragment.
+- Internal helper methods that tracked DOM work by hand (`_getRenderEffectsCount`,
+  `_cleanupAllEventListeners`, `_extractRenderEffects`, `_extractEventListeners`,
+  `_stopEventListeners`) were removed from `ComponentInstance`; Parts own their
+  effects and listeners now. `_getEventListenersCount()` is kept but reports the
+  listeners of the template instance the component owns.
 - `is` values and dynamic tag names are validated as custom-element names.
 
 ### Added
