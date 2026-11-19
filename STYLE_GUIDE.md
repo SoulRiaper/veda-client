@@ -274,6 +274,25 @@ render() {
 }
 ```
 
+### JSX vs String Templates
+
+Both paths share `Effect.js`/`Reactive.js` and can coexist in one tree. JSX is
+an optional separate package: import `veda-jsx` once; core `veda-client` stays
+free of the JSX runtime.
+
+**Use JSX** when:
+- The component is new and authored at build time.
+- You want compile-time expressions (CSP-safe, no `ExpressionParser`).
+- You need fine-grained reactive text/attributes without re-parsing HTML.
+
+**Use string templates** when:
+- The template is authored or serialized at runtime.
+- You rely on `{expr}` RDF paths and `ExpressionParser` auto-detection.
+- You are maintaining existing components; migration is per-component.
+
+Do not mix the two styles inside one `render()` return. A string component may
+contain a JSX custom element and vice versa; see the `veda-jsx` README.
+
 ### Expressions vs Computed Properties
 
 **Use expressions** for:

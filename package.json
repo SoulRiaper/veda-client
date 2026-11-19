@@ -6,6 +6,25 @@
   "main": "src/index.js",
   "types": "src/index.d.ts",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./plugin-api": {
+      "types": "./src/plugin-api.d.ts",
+      "import": "./src/plugin-api.js",
+      "default": "./src/plugin-api.js"
+    },
+    "./package.json": "./package.json",
+    "./view-api": {
+      "types": "./src/view-api.d.ts",
+      "import": "./src/view-api.js",
+      "default": "./src/view-api.js"
+    },
+    "./*": "./*"
+  },
   "scripts": {
     "test": "tsc --noEmit && time -p node --expose-gc test",
     "test:unit": "tsc --noEmit && time -p node --expose-gc test --unit",

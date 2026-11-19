@@ -6,6 +6,7 @@ import Router from '../src/Router.js';
 import Subscription from '../src/Subscription.js';
 import { genUri, timeout } from '../src/Util.js';
 import Value, { ValueData } from '../src/Value.js';
+import { registerRenderAdapter, setAttributeOrProperty, reconcileOrder, ExpressionParser } from '../src/plugin-api.js';
 
 // Test Backend types
 async function testBackend() {
@@ -114,6 +115,26 @@ function testValue() {
 
   const parsed = Value.parse(value);
   const serialized = Value.serialize('test string');
+}
+
+// Test render-plugin API types
+function testPluginApi() {
+  const unregister = registerRenderAdapter({
+    beforeUpdate(_component) {},
+    render(_component, renderFn) {
+      return renderFn();
+    },
+    afterUpdate(_component, _output) {},
+    onConnect(_component) { return false; },
+    onDisconnect(_component) { return false; },
+    cleanup(_component) {},
+    onError(_component) {}
+  });
+  unregister();
+
+  void setAttributeOrProperty;
+  void reconcileOrder;
+  void ExpressionParser;
 }
 
 // TypeScript types check passed

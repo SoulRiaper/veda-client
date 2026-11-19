@@ -4,6 +4,7 @@ export {default as Subscription} from './Subscription.js';
 export {default as Emitter} from './Emitter.js';
 export {default as Model} from './Model.js';
 export {default as Component, html, safe, raw, reactive, effect} from './components/Component.js';
+export {registerRenderAdapter} from './components/render-adapter.js';
 export {Loop} from './components/LoopComponent.js';
 export {If} from './components/IfComponent.js';
 export {Virtual} from './components/VirtualComponent.js';

@@ -223,6 +223,19 @@ this.watch(() => state.items.length, callback);
 
 **Status:** Documented limitation (intentional safeguard). If you hit the Loop limit, the component tree likely needs flattening.
 
+### 6. JSX Path
+
+JSX is not part of the core package. It is provided by the separate
+[`veda-jsx`](https://www.npmjs.com/package/veda-jsx) plugin, which registers a
+render adapter through `veda-client/plugin-api`.
+
+Core remains template-only; projects that do not import `veda-jsx` keep the
+JSX runtime out of their bundle. Current JSX constraints (factories for
+`Show`/`For`, view-only function components, keyed row reuse) are documented
+in the plugin README.
+
+**Status:** By design; the string path remains the compatibility baseline.
+
 ---
 
 ## Best Practices

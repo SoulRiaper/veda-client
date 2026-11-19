@@ -7,7 +7,8 @@ A lightweight reactive framework for building semantic web applications with fin
 - 🎯 **Fine-grained reactivity** - Vue 3-inspired reactive system with automatic dependency tracking
 - 🧩 **Web Components** - Built on native Custom Elements API
 - 🔗 **Semantic data** - First-class RDF/linked data model support
-- 📝 **Declarative templates** - JSX-like syntax with reactive expressions
+- 📝 **Declarative templates** - `html` templates with reactive `{expr}` expressions
+- ⚡ **Optional JSX plugin** - build-time JSX via the separate `veda-jsx` package; the core stays template-only
 - 🔄 **Built-in components** - Loop, If, Property, Relation components
 - ♻️ **Circular references** - Automatic handling for RDF graph structures
 - 📦 **Minimal footprint** - ~50 KB browser bundle, ~85 KB with Node.js (includes ws)
@@ -206,6 +207,30 @@ import { Loop, If } from 'veda-client';
   <item-card></item-card>
 </${Loop}>
 ```
+
+### Compiled View API
+
+`veda-client/view-api` is a public, renderer-agnostic surface for compiled
+renderers (for example the AOT JSX compiler in `veda-jsx`). It provides scoped
+DOM/effect bindings, template cloning, keyed lists, branch bindings, and a
+`View` contract for `render()`:
+
+```javascript
+import {bindText, bindAttr, template, useTemplate} from 'veda-client/view-api';
+
+const tpl = template('<h1><!--v:0--></h1>');
+
+render() {
+  return useTemplate(tpl, (root, markers) => {
+    bindText(markers[0], () => this.state.title);
+  });
+}
+```
+
+`render()` may also return `{nodes, dispose}`; the core mounts the nodes,
+calls `dispose` before the next update and on disconnect, and exposes
+`renderScope`, `addCleanup()`, `mountView()` and `container` to renderers.
+See the `veda-jsx` package for the compiler that targets this API.
 
 ## Browser Support
 

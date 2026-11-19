@@ -4,6 +4,8 @@ export { default as Subscription } from './Subscription.js';
 export { default as Emitter } from './Emitter.js';
 export { default as Model } from './Model.js';
 export { default as Component, html, safe, raw, reactive, effect } from './components/Component.js';
+export { registerRenderAdapter } from './components/render-adapter.js';
+export type { RenderAdapter } from './components/render-adapter.js';
 export { computed } from './Reactive.js';
 export { flushEffects, trigger, untrack, pauseTracking, resumeTracking } from './Effect.js';
 export { default as Router } from './Router.js';
@@ -34,7 +36,7 @@ export type { IndividualData, AuthResult, QueryResult, QueryParams, UploadFilePa
 export type { ValueData, ValueType, PrimitiveValue } from './Value.js';
 export type { EmitterInstance } from './Emitter.js';
 export type { ModelValue } from './Model.js';
-export type { ComponentInstance } from './components/Component.js';
+export type { ComponentInstance, View } from './components/Component.js';
 export type { LoopComponentInstance } from './components/LoopComponent.js';
 export type { IfComponentInstance } from './components/IfComponent.js';
 export type { VirtualComponentInstance } from './components/VirtualComponent.js';

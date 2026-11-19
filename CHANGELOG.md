@@ -5,6 +5,28 @@ All notable changes to Veda Client Framework will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Generic render-adapter hook (`registerRenderAdapter`) and DOM output mounting
+- `veda-client/plugin-api` extension entry for standalone render plugins
+- Public `veda-client/view-api` entry for compiled renderers: scoped
+  `bindText`/`bindChild`/`bindAttr`/`bindProp`/`bindEvent`/`bindRef`,
+  keyed `bindList`, `bindShow`, node-based `bindSlot`/`bindPlace`, template
+  and marker helpers, and `component()` mounting with lazy props
+- `View` contract: `render()` may return `{nodes, dispose}`; the core mounts
+  the nodes, calls `dispose` before the next update and on disconnect
+- `Component.renderScope`, `Component.addCleanup()`, `Component.mountView()`
+  and `Component.container` public surface
+- Core move guard keeps a mounted DOM view and its effects alive when a
+  component is moved rather than removed
+
+### Changed
+- Extracted `setAttributeOrProperty` (`dom-bind.js`) and LIS reconciliation (`reconcile.js`) into shared modules; `Component` and `Loop` behavior is unchanged
+- JSX authoring moved to the separate `veda-jsx` package; core `veda-client` remains template-only
+- The core creates a per-render view scope when no render adapter is
+  registered, so `veda-client/view-api` bindings work without `veda-jsx`
+
 ## [3.0.0] - 2025-11
 
 ### Added

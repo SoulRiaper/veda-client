@@ -4,6 +4,18 @@ export function html(strings: TemplateStringsArray, ...values: any[]): string;
 export function raw(strings: TemplateStringsArray, ...values: any[]): string;
 export function safe(value: any): string | string[];
 
+export interface View {
+  nodes: Node[];
+  dispose?(): void;
+}
+
+export interface ViewScope {
+  component: any;
+  cleanups: Array<() => void>;
+  disposed: boolean;
+  [key: string]: any;
+}
+
 export interface ComponentState<M extends Model = Model> {
   model?: M;
   [key: string]: any;
@@ -23,12 +35,18 @@ export interface ComponentInstance<M extends Model = Model> {
 
   added(): void | Promise<void>;
   pre(): void | Promise<void>;
-  render(): string | Promise<string> | undefined;
-  post(fragment?: DocumentFragment): void | Promise<void>;
+  render(): string | Node | Node[] | View | Promise<string | Node | Node[] | View> | undefined;
+  post(fragment?: DocumentFragment | HTMLElement): void | Promise<void>;
   removed(): void | Promise<void>;
 
   update(): Promise<void>;
   populate(): Promise<void>;
+
+  // View contract (compiler output and renderer plugins)
+  readonly renderScope: ViewScope | null;
+  readonly container: HTMLElement | ShadowRoot;
+  addCleanup(fn: () => void): () => void;
+  mountView(view: View | Node | Node[] | string): Node[];
 
   // Reactive methods
   effect(fn: () => void): () => void;
@@ -42,10 +60,11 @@ export interface ComponentInstance<M extends Model = Model> {
   _getEventListenersCount(): number;
   _extractEventListeners(startIndex: number): Array<{node: EventTarget; eventName: string; handler: EventListener}>;
   _stopEventListeners(listeners?: Array<{node: EventTarget; eventName: string; handler: EventListener}>): void;
+  _trackChildRendered(promise: Promise<void>): void;
 }
 
-export interface ComponentConstructor {
-  new (): HTMLElement & ComponentInstance;
+export interface ComponentConstructor<T extends typeof HTMLElement = typeof HTMLElement> {
+  new (): InstanceType<T> & ComponentInstance;
   tag: string;
   toString(): string;
 }

@@ -2,6 +2,7 @@ import Component from './Component.js';
 import ExpressionParser from './ExpressionParser.js';
 import {effect} from '../Effect.js';
 import {reactive} from '../Reactive.js';
+import {reconcileOrder} from './reconcile.js';
 
 /**
  * Loop component for rendering reactive lists with reconciliation
@@ -149,10 +150,8 @@ export default function LoopComponent(Class = HTMLElement) {
       // Previous item order. #rememberOrder rewrites the map to match it after each reconcile,
       // because Map keeps insertion order and set() on an existing key does not move it.
       const oldKeys = [];
-      const oldKeySet = new Set();
       for (const key of this.#itemsMap.keys()) {
         oldKeys.push(key);
-        oldKeySet.add(key);
       }
 
       // Build array of new keys (only those that already exist in DOM)
@@ -185,7 +184,7 @@ export default function LoopComponent(Class = HTMLElement) {
       });
 
       // Use LIS-based reordering for optimal DOM moves
-      this.#reorderWithLIS(newKeysArray, oldKeys, oldKeySet);
+      reconcileOrder(this, newKeysArray, oldKeys, this.#itemsMap);
       this.#rememberOrder(newKeysArray);
     }
 
@@ -198,128 +197,6 @@ export default function LoopComponent(Class = HTMLElement) {
         if (itemData) ordered.set(key, itemData);
       }
       this.#itemsMap = ordered;
-    }
-
-    /**
-     * Reorder DOM elements using LIS (Longest Increasing Subsequence) optimization.
-     * This minimizes DOM moves by finding elements that are already in correct relative order.
-     */
-    #reorderWithLIS(newKeys, oldKeys, oldKeySet) {
-      // If no existing elements, just append all in order
-      if (oldKeys.length === 0) {
-        newKeys.forEach(key => {
-          const itemData = this.#itemsMap.get(key);
-          if (itemData?.element) {
-            this.appendChild(itemData.element);
-          }
-        });
-        return;
-      }
-
-      // Map old keys to their positions
-      const oldKeyIndex = new Map(oldKeys.map((key, i) => [key, i]));
-
-      // Get positions of new keys in old order (only for keys that existed)
-      const positions = [];
-      const keyAtPosition = [];
-      newKeys.forEach((key, newIndex) => {
-        if (oldKeySet.has(key)) {
-          positions.push(oldKeyIndex.get(key));
-          keyAtPosition.push({ key, newIndex });
-        }
-      });
-
-      // Find LIS - these elements don't need to move
-      const lisIndices = this.#longestIncreasingSubsequence(positions);
-      const stablePositions = new Set(lisIndices.map(i => positions[i]));
-
-      // Determine which keys are stable (in LIS)
-      const stableKeys = new Set();
-      keyAtPosition.forEach((item, i) => {
-        if (stablePositions.has(positions[i])) {
-          stableKeys.add(item.key);
-        }
-      });
-
-      // Move elements: iterate in reverse, placing each before its successor
-      let nextSibling = null;
-      for (let i = newKeys.length - 1; i >= 0; i--) {
-        const key = newKeys[i];
-        const itemData = this.#itemsMap.get(key);
-        if (!itemData?.element) continue;
-
-        const element = itemData.element;
-        const isNew = !oldKeySet.has(key);
-        const needsMove = isNew || !stableKeys.has(key);
-
-        if (needsMove) {
-          // Element needs to be moved/inserted
-          if (nextSibling) {
-            if (element.nextSibling !== nextSibling) {
-              this.insertBefore(element, nextSibling);
-            }
-          } else {
-            if (element !== this.lastChild) {
-              this.appendChild(element);
-            }
-          }
-        }
-
-        nextSibling = element;
-      }
-    }
-
-    /**
-     * Find Longest Increasing Subsequence indices using binary search.
-     * Time: O(n log n), Space: O(n)
-     * Returns indices into the input array that form the LIS.
-     */
-    #longestIncreasingSubsequence(arr) {
-      const n = arr.length;
-      if (n === 0) return [];
-
-      // tails[i] = index in arr of smallest tail element for LIS of length i+1
-      const tails = [];
-      // parent[i] = index of previous element in LIS ending at arr[i]
-      const parent = new Array(n).fill(-1);
-
-      for (let i = 0; i < n; i++) {
-        const val = arr[i];
-
-        // Binary search for position
-        let lo = 0;
-        let hi = tails.length;
-        while (lo < hi) {
-          const mid = (lo + hi) >>> 1;
-          if (arr[tails[mid]] < val) {
-            lo = mid + 1;
-          } else {
-            hi = mid;
-          }
-        }
-
-        // lo is the position where val should go
-        if (lo > 0) {
-          parent[i] = tails[lo - 1];
-        }
-
-        if (lo === tails.length) {
-          tails.push(i);
-        } else {
-          tails[lo] = i;
-        }
-      }
-
-      // Reconstruct LIS indices
-      const lis = [];
-      let k = tails[tails.length - 1];
-      while (k >= 0) {
-        lis.push(k);
-        k = parent[k];
-      }
-      lis.reverse();
-
-      return lis;
     }
 
     #getKey(item, keyAttr, fallbackIndex) {

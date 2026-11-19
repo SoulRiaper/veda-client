@@ -8,6 +8,15 @@ import ExpressionParser from './ExpressionParser.js';
 import {effect, untrack} from '../Effect.js';
 import {reactive, toRaw} from '../Reactive.js';
 import {createContextProxy} from './contextLookup.js';
+import {setAttributeOrProperty} from './dom-bind.js';
+import {getRenderAdapter} from './render-adapter.js';
+import {
+  addCleanup as addViewCleanup,
+  createScope,
+  disposeScope,
+  getCurrentScope,
+  runInScope,
+} from '../view-api.js';
 
 // ============================================================================
 // CONSTANTS
@@ -164,6 +173,49 @@ function sanitizeExpressionResult(value) {
 }
 
 // ============================================================================
+// JSX OUTPUT NORMALIZATION
+// ============================================================================
+
+function isViewObject(value) {
+  return value != null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && !(value instanceof Node)
+    && Array.isArray(value.nodes);
+}
+
+/**
+ * Normalize a render result to DOM nodes.
+ *
+ * A `View` object (`{nodes, dispose}`) may be returned by renderers that own
+ * their effects; the dispose callback is kept on the component and called
+ * before the next update and on disconnect.
+ */
+function normalizeViewOutput(value, state = null) {
+  const nodes = [];
+  if (isViewObject(value)) {
+    if (state && typeof value.dispose === 'function') state.dispose = value.dispose;
+    appendViewOutput(value.nodes, nodes);
+    return nodes;
+  }
+  appendViewOutput(value, nodes);
+  return nodes;
+}
+
+function appendViewOutput(value, out) {
+  if (value == null || value === false || value === true) return;
+  if (Array.isArray(value)) {
+    for (const item of value) appendViewOutput(item, out);
+    return;
+  }
+  if (value instanceof Node) {
+    out.push(value);
+    return;
+  }
+  out.push(document.createTextNode(String(value)));
+}
+
+// ============================================================================
 // COMPONENT CLASS
 // ============================================================================
 
@@ -182,6 +234,10 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
     #eventListeners = [];
     #isReactive = false;
     #holdsSubscription = false;
+    #renderScope = null;
+    #viewDispose = null;
+    #mountedView = false;
+    #movedView = false;
     template;
 
     // ---------- Constructor & Lifecycle ----------
@@ -219,6 +275,15 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
 
     async connectedCallback () {
       try {
+        // A render adapter may recognise a move and keep its mounted tree.
+        if (getRenderAdapter()?.onConnect?.(this)) return;
+        // Without an adapter, the core keeps a mounted DOM view alive across
+        // a move: the custom-element callbacks run after the node is already
+        // in its new parent, so isConnected is true.
+        if (this.#movedView) {
+          this.#movedView = false;
+          return;
+        }
         if (LAYOUT_TRANSPARENT_TAGS.has(this.tagName?.toLowerCase())) {
           this.style.display = 'contents';
         }
@@ -240,6 +305,12 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
 
     async disconnectedCallback () {
       try {
+        // A move keeps the mounted tree (and its effects/listeners) alive.
+        if (getRenderAdapter()?.onDisconnect?.(this)) return;
+        if (this.#mountedView && this.isConnected) {
+          this.#movedView = true;
+          return;
+        }
         if (typeof window !== 'undefined' && window.__VEDA_DEVTOOLS_HOOK__) {
           window.__VEDA_DEVTOOLS_HOOK__.untrackComponent(this);
         }
@@ -275,6 +346,73 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
       this.#effects = [];
       this.#renderEffects.forEach(c => c());
       this.#renderEffects = [];
+      this.#disposeView();
+      getRenderAdapter()?.cleanup?.(this);
+    }
+
+    // ---------- View Contract ----------
+    /**
+     * Current render scope. Created by the core when no render adapter owns
+     * the lifecycle; also the ambient scope while render() runs.
+     */
+    get renderScope () {
+      return this.#renderScope ?? getCurrentScope();
+    }
+
+    /**
+     * The mount container: the element itself, or its shadow root when the
+     * `shadow` attribute is present.
+     */
+    get container () {
+      return this.hasAttribute('shadow')
+        ? this.shadowRoot ?? (this.attachShadow({mode: 'open'}), this.shadowRoot)
+        : this;
+    }
+
+    /**
+     * Register a cleanup for the current render. Cleans up on the next
+     * update and on disconnect.
+     */
+    addCleanup (fn) {
+      if (typeof fn !== 'function') return () => {};
+      const scope = this.#renderScope;
+      if (scope && !scope.disposed) {
+        scope.cleanups.push(fn);
+        return fn;
+      }
+      return addViewCleanup(fn);
+    }
+
+    /**
+     * Mount a render result into the container. Accepts a `View`
+     * (`{nodes, dispose}`), nodes, an array, or a string.
+     */
+    mountView (view) {
+      const state = {dispose: null};
+      const nodes = normalizeViewOutput(view, state);
+      this.container.replaceChildren(...nodes);
+      this.#viewDispose = state.dispose;
+      this.#mountedView = true;
+      return nodes;
+    }
+
+
+    #disposeView () {
+      const dispose = this.#viewDispose;
+      this.#viewDispose = null;
+      if (dispose) {
+        try {
+          dispose();
+        } catch (error) {
+          console.error('Error disposing component view:', error);
+        }
+      }
+      if (this.#renderScope) {
+        disposeScope(this.#renderScope);
+        this.#renderScope = null;
+      }
+      this.#mountedView = false;
+      this.#movedView = false;
     }
 
     #cleanupEventListeners() {
@@ -304,6 +442,12 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
       }
     }
 
+    _trackChildRendered(promise) {
+      if (promise && typeof promise.then === 'function') {
+        this.#childrenRendered.push(promise);
+      }
+    }
+
     _deferRendered() {
       this.#deferredRendered = new Promise(resolve => {
         this.#resolveDeferredFn = resolve;
@@ -329,41 +473,86 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
         this.#renderEffects.forEach(c => c());
         this.#renderEffects = [];
         this.#cleanupEventListeners();
+        this.#disposeView();
 
         const pre = this.pre();
         if (pre instanceof Promise) await pre;
 
-        let html = this.render();
-        if (html instanceof Promise) html = await html;
-        if (typeof html === 'undefined') {
+        // Optional render plugin (for example the separate veda-jsx package).
+        // Without an adapter the core owns the per-render view scope.
+        const adapter = getRenderAdapter();
+        adapter?.beforeUpdate?.(this);
+
+        const coreScope = adapter ? null : createScope(this);
+        if (coreScope) this.#renderScope = coreScope;
+
+        const renderFn = () => this.render();
+        let output;
+        try {
+          output = coreScope
+            ? await runInScope(coreScope, renderFn)
+            : adapter?.render
+              ? await adapter.render(this, renderFn)
+              : await renderFn();
+        } catch (error) {
+          if (coreScope) this.#disposeView();
+          throw error;
+        }
+
+        if (typeof output === 'undefined') {
+          adapter?.afterUpdate?.(this, output);
+          if (coreScope) this.#disposeView();
           const post = this.post();
           if (post instanceof Promise) await post;
           return;
         }
 
-        html = typeof html === 'string' ? html.replaceAll(marker, '') : html;
-        let template = document.createElement('template');
-        template.innerHTML = html;
-        let fragment = template.content;
+        const container = this.container;
 
-        this._process(fragment, this._processEvalContext());
+        if (typeof output === 'string') {
+          // ═══ Existing string-template path: unchanged ═══
+          adapter?.afterUpdate?.(this, output);
+          if (coreScope) this.#disposeView();
 
-        const container = this.hasAttribute('shadow')
-          ? this.shadowRoot ?? (this.attachShadow({mode: 'open'}), this.shadowRoot)
-          : this;
-        container.replaceChildren(fragment);
+          output = output.replaceAll(marker, '');
+          let template = document.createElement('template');
+          template.innerHTML = output;
+          let fragment = template.content;
 
-        if (typeof window !== 'undefined' && window.__VEDA_DEVTOOLS_HOOK__) {
-          window.__VEDA_DEVTOOLS_HOOK__.trackComponentRender(this, _renderStart);
+          this._process(fragment, this._processEvalContext());
+
+          container.replaceChildren(fragment);
+
+          if (typeof window !== 'undefined' && window.__VEDA_DEVTOOLS_HOOK__) {
+            window.__VEDA_DEVTOOLS_HOOK__.trackComponentRender(this, _renderStart);
+          }
+
+          const post = this.post(fragment);
+          if (post instanceof Promise) await post;
+
+          template.remove();
+          template = null;
+          fragment = null;
+        } else {
+          // ═══ DOM / View path: nodes are already built ═══
+          const viewState = {dispose: null};
+          const nodes = normalizeViewOutput(output, viewState);
+          container.replaceChildren(...nodes);
+          this.#viewDispose = viewState.dispose;
+          this.#mountedView = true;
+          adapter?.afterUpdate?.(this, output);
+
+          if (typeof window !== 'undefined' && window.__VEDA_DEVTOOLS_HOOK__) {
+            window.__VEDA_DEVTOOLS_HOOK__.trackComponentRender(this, _renderStart);
+          }
+
+          const post = this.post(container);
+          if (post instanceof Promise) await post;
         }
-
-        const post = this.post(fragment);
-        if (post instanceof Promise) await post;
-
-        template.remove();
-        template = null;
-        fragment = null;
       } catch (error) {
+        // The adapter decides whether a failed render left a live tree.
+        getRenderAdapter()?.onError?.(this);
+        this.#disposeView();
         console.log(this, 'Component render error', error);
       }
     }
@@ -809,37 +998,7 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
     }
 
     #setAttributeOrProperty(node, attrName, value, hasNull, attr = null) {
-      // Check if this attribute should be set as DOM property
-      // Properties like value, checked, disabled exist on DOM elements
-      // Exclude style/class - they have object types and need attribute handling
-      const shouldUseProperty = attrName in node &&
-                                !attrName.startsWith('data-') &&
-                                attrName !== 'style' &&
-                                attrName !== 'class';
-
-      if (shouldUseProperty) {
-        // Boolean properties need special handling
-        if (typeof node[attrName] === 'boolean') {
-          const boolValue = !hasNull && value !== 'false' &&
-                           (value === 'true' || value === '' || value === attrName || value === true);
-          if (node[attrName] !== boolValue) {
-            node[attrName] = boolValue;
-            node.toggleAttribute(attrName, boolValue);
-          }
-        } else {
-          // String/other properties (like value)
-          if (node[attrName] !== value) {
-            node[attrName] = value;
-          }
-        }
-      } else {
-        // Regular attribute
-        if (attr) {
-          attr.nodeValue = value;
-        } else if (node.getAttribute(attrName) !== value) {
-          node.setAttribute(attrName, value);
-        }
-      }
+      setAttributeOrProperty(node, attrName, value, hasNull, attr);
     }
 
     // ========================================================================
