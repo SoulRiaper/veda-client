@@ -227,7 +227,8 @@ this.watch(() => state.items.length, callback);
 
 JSX is not part of the core package. It is provided by the separate
 [`veda-jsx`](https://www.npmjs.com/package/veda-jsx) plugin, which registers a
-render adapter through `veda-client/plugin-api`.
+render adapter through `veda-client/plugin-api`. Compiled output imports
+`veda-jsx/view-api`; binding helpers are not part of core.
 
 Core remains template-only; projects that do not import `veda-jsx` keep the
 JSX runtime out of their bundle. Current JSX constraints (factories for

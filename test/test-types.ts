@@ -6,7 +6,18 @@ import Router from '../src/Router.js';
 import Subscription from '../src/Subscription.js';
 import { genUri, timeout } from '../src/Util.js';
 import Value, { ValueData } from '../src/Value.js';
-import { registerRenderAdapter, setAttributeOrProperty, reconcileOrder, ExpressionParser } from '../src/plugin-api.js';
+import {
+  registerRenderAdapter,
+  setAttributeOrProperty,
+  reconcileOrder,
+  ExpressionParser,
+  createScope,
+  disposeScope,
+  runInScope,
+  scopedEffect,
+  listen,
+  type ViewScope,
+} from '../src/plugin-api.js';
 
 // Test Backend types
 async function testBackend() {
@@ -135,6 +146,13 @@ function testPluginApi() {
   void setAttributeOrProperty;
   void reconcileOrder;
   void ExpressionParser;
+
+  const scope: ViewScope = createScope(null);
+  runInScope(scope, () => {
+    scopedEffect(() => {});
+    listen(document.createElement('button'), 'click', () => {});
+  });
+  disposeScope(scope);
 }
 
 // TypeScript types check passed

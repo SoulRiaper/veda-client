@@ -9,23 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Generic render-adapter hook (`registerRenderAdapter`) and DOM output mounting
-- `veda-client/plugin-api` extension entry for standalone render plugins
-- Public `veda-client/view-api` entry for compiled renderers: scoped
-  `bindText`/`bindChild`/`bindAttr`/`bindProp`/`bindEvent`/`bindRef`,
-  keyed `bindList`, `bindShow`, node-based `bindSlot`/`bindPlace`, template
-  and marker helpers, and `component()` mounting with lazy props
+- `veda-client/plugin-api` extension entry for standalone render plugins,
+  including the shared view-scope primitives (`createScope`, `runInScope`,
+  `disposeScope`, `scopedEffect`, `addCleanup`, `listen`)
 - `View` contract: `render()` may return `{nodes, dispose}`; the core mounts
   the nodes, calls `dispose` before the next update and on disconnect
-- `Component.renderScope`, `Component.addCleanup()`, `Component.mountView()`
-  and `Component.container` public surface
+- `Component.renderScope`, `Component.addCleanup()` and `Component.container`
+  public surface
 - Core move guard keeps a mounted DOM view and its effects alive when a
   component is moved rather than removed
 
 ### Changed
+- View scopes are synchronous: `runInScope()` restores the active scope before
+  returning. Compiled renderers must build their view synchronously; load
+  async data in `pre()`/`added()` or reactive state. This prevents two
+  concurrent async renders from stealing each other's bindings.
 - Extracted `setAttributeOrProperty` (`dom-bind.js`) and LIS reconciliation (`reconcile.js`) into shared modules; `Component` and `Loop` behavior is unchanged
 - JSX authoring moved to the separate `veda-jsx` package; core `veda-client` remains template-only
-- The core creates a per-render view scope when no render adapter is
-  registered, so `veda-client/view-api` bindings work without `veda-jsx`
+- Compiled-renderer bindings live in `veda-jsx/view-api`; the core owns only
+  the adapter hook and the shared scope tree. The core still creates a
+  per-render scope when no render adapter is registered, so compiled output
+  works without importing the JSX runtime.
+- There is no core `veda-client/view-api` entry; use `veda-jsx/view-api` for
+  compiled bindings.
 
 ## [3.0.0] - 2025-11
 
@@ -56,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manual model subscription in components (replaced by automatic reactivity)
 
 ### Fixed
+- `bindAttr`/`bindProp` now unwrap getter-returning getters, so `expr()` works in attributes and component props
+- `bindEvent` calls handlers with the owning component as `this` (the DOM node is the second argument and `event.currentTarget`), matching the string pipeline
+- `bindList` rebuilds a row when an immutable item replaces the same key, and refreshes index-dependent rows after reorder
+- `bindRef` removes named refs when the render scope is disposed
 - Race conditions in concurrent effect flushes
 - Circular reference handling in reactive proxies
 - Prototype pollution prevention

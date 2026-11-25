@@ -278,7 +278,8 @@ render() {
 
 Both paths share `Effect.js`/`Reactive.js` and can coexist in one tree. JSX is
 an optional separate package: import `veda-jsx` once; core `veda-client` stays
-free of the JSX runtime.
+free of the JSX runtime. Compiled output imports `veda-jsx/view-api`, while the
+shared scope stack comes from `veda-client/plugin-api`.
 
 **Use JSX** when:
 - The component is new and authored at build time.

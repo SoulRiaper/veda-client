@@ -208,29 +208,19 @@ import { Loop, If } from 'veda-client';
 </${Loop}>
 ```
 
-### Compiled View API
+### Render Plugins
 
-`veda-client/view-api` is a public, renderer-agnostic surface for compiled
-renderers (for example the AOT JSX compiler in `veda-jsx`). It provides scoped
-DOM/effect bindings, template cloning, keyed lists, branch bindings, and a
-`View` contract for `render()`:
-
-```javascript
-import {bindText, bindAttr, template, useTemplate} from 'veda-client/view-api';
-
-const tpl = template('<h1><!--v:0--></h1>');
-
-render() {
-  return useTemplate(tpl, (root, markers) => {
-    bindText(markers[0], () => this.state.title);
-  });
-}
-```
+The core exposes a render-adapter hook and the shared view-scope primitives
+through `veda-client/plugin-api`. Compiled renderers live in separate packages:
+the AOT JSX compiler in `veda-jsx` targets `veda-jsx/view-api`, which provides
+scoped DOM/effect bindings, template cloning, keyed lists, branch bindings and
+component mounting.
 
 `render()` may also return `{nodes, dispose}`; the core mounts the nodes,
 calls `dispose` before the next update and on disconnect, and exposes
-`renderScope`, `addCleanup()`, `mountView()` and `container` to renderers.
-See the `veda-jsx` package for the compiler that targets this API.
+`renderScope`, `addCleanup()` and `container` to renderers.
+
+See the `veda-jsx` package for the compiler and the binding API.
 
 ## Browser Support
 
