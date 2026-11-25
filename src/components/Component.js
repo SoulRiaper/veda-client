@@ -16,7 +16,7 @@ import {
   disposeScope,
   getCurrentScope,
   runInScope,
-} from '../view-api.js';
+} from '../view-scope.js';
 
 // ============================================================================
 // CONSTANTS
@@ -382,20 +382,6 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
       }
       return addViewCleanup(fn);
     }
-
-    /**
-     * Mount a render result into the container. Accepts a `View`
-     * (`{nodes, dispose}`), nodes, an array, or a string.
-     */
-    mountView (view) {
-      const state = {dispose: null};
-      const nodes = normalizeViewOutput(view, state);
-      this.container.replaceChildren(...nodes);
-      this.#viewDispose = state.dispose;
-      this.#mountedView = true;
-      return nodes;
-    }
-
 
     #disposeView () {
       const dispose = this.#viewDispose;

@@ -1,19 +1,15 @@
 import Model from '../Model.js';
+import type {ViewScope} from '../view-scope.js';
 
 export function html(strings: TemplateStringsArray, ...values: any[]): string;
 export function raw(strings: TemplateStringsArray, ...values: any[]): string;
 export function safe(value: any): string | string[];
 
+export type {ViewScope};
+
 export interface View {
   nodes: Node[];
   dispose?(): void;
-}
-
-export interface ViewScope {
-  component: any;
-  cleanups: Array<() => void>;
-  disposed: boolean;
-  [key: string]: any;
 }
 
 export interface ComponentState<M extends Model = Model> {
@@ -36,7 +32,7 @@ export interface ComponentInstance<M extends Model = Model> {
   added(): void | Promise<void>;
   pre(): void | Promise<void>;
   render(): string | Node | Node[] | View | Promise<string | Node | Node[] | View> | undefined;
-  post(fragment?: DocumentFragment | HTMLElement): void | Promise<void>;
+  post(fragment?: DocumentFragment | HTMLElement | ShadowRoot): void | Promise<void>;
   removed(): void | Promise<void>;
 
   update(): Promise<void>;
@@ -46,7 +42,6 @@ export interface ComponentInstance<M extends Model = Model> {
   readonly renderScope: ViewScope | null;
   readonly container: HTMLElement | ShadowRoot;
   addCleanup(fn: () => void): () => void;
-  mountView(view: View | Node | Node[] | string): Node[];
 
   // Reactive methods
   effect(fn: () => void): () => void;

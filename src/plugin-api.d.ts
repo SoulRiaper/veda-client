@@ -5,3 +5,14 @@ export { reconcileOrder, longestIncreasingSubsequence } from './components/recon
 export type { ReconcileItem } from './components/reconcile.js';
 export { default as ExpressionParser } from './components/ExpressionParser.js';
 export { effect } from './Effect.js';
+export {
+  createScope,
+  getCurrentScope,
+  currentComponent,
+  runInScope,
+  scopedEffect,
+  addCleanup,
+  disposeScope,
+  listen,
+} from './view-scope.js';
+export type { ViewScope } from './view-scope.js';
