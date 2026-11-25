@@ -1,19 +1,19 @@
 /**
- * Render adapter hook.
+ * Optional render-adapter hook.
  *
- * Core stays free of JSX. An optional adapter (for example the
- * `veda-jsx` package) can own the render lifecycle:
+ * Core owns the render scope, DOM/string output mounting, cleanup and the move
+ * guard. An adapter may only wrap the author's `render()` call, for example to
+ * provide an alternative renderer that returns DOM nodes:
  *
- *   beforeUpdate(component)              -> prepare per-render state
- *   render(component, renderFn)          -> run render() in an ambient scope
- *   afterUpdate(component, output)       -> output is a string or DOM nodes
- *   onConnect(component) -> boolean      -> true: skip connectedCallback work
- *   onDisconnect(component) -> boolean   -> true: this is a move, keep the tree
- *   cleanup(component)                   -> component is really disconnected
- *   onError(component)                   -> render/update threw
+ *   registerRenderAdapter({
+ *     render(component, renderFn) {
+ *       return compileAndRender(component, renderFn);
+ *     },
+ *   });
  *
- * Only the last registered adapter is active. Without one, component behavior
- * is exactly the original string-template pipeline.
+ * The adapter runs inside the core-created view scope, so bindings created by
+ * `veda-client/plugin-api` are disposed with the component. Only the last
+ * registered adapter is active.
  */
 
 let currentAdapter = null;

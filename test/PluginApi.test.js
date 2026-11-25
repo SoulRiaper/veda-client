@@ -14,35 +14,33 @@ export default ({test, assert}) => {
     assert(getRenderAdapter() === before, 'previous adapter restored');
   });
 
-  test('Plugin API - adapter wraps render, output and cleanup', async () => {
+  test('Plugin API - adapter wraps render inside the core scope', async () => {
     const calls = [];
 
     class AdapterApp extends Component(HTMLElement) {
       render() {
         calls.push('render');
+        this.addCleanup(() => calls.push('cleanup'));
         return html`<span class="x">ok</span>`;
       }
     }
 
     const unregister = registerRenderAdapter({
-      beforeUpdate() { calls.push('before'); },
-      render(_component, renderFn) {
+      render(component, renderFn) {
+        assert(component.renderScope, 'render runs inside the core scope');
         calls.push('adapter-render');
         return renderFn();
       },
-      afterUpdate(_component, output) { calls.push(typeof output); },
-      cleanup() { calls.push('cleanup'); },
     });
 
     try {
       const {component, cleanup} = await createTestComponent(AdapterApp);
 
-      assert(calls[0] === 'before', 'beforeUpdate ran first');
-      assert(calls.includes('adapter-render'), 'adapter rendered');
-      assert(calls.includes('string'), 'afterUpdate saw the string output');
+      assert.equal(calls[0], 'adapter-render', 'adapter wrapped render');
+      assert(calls.includes('render'), 'author render ran');
 
       component.remove();
-      assert(calls.includes('cleanup'), 'cleanup ran on disconnect');
+      assert(calls.includes('cleanup'), 'core disposed the render scope');
 
       cleanup();
     } finally {

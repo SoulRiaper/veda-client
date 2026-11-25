@@ -14,7 +14,6 @@ import {
   addCleanup as addViewCleanup,
   createScope,
   disposeScope,
-  getCurrentScope,
   runInScope,
 } from '../view-scope.js';
 
@@ -275,11 +274,9 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
 
     async connectedCallback () {
       try {
-        // A render adapter may recognise a move and keep its mounted tree.
-        if (getRenderAdapter()?.onConnect?.(this)) return;
-        // Without an adapter, the core keeps a mounted DOM view alive across
-        // a move: the custom-element callbacks run after the node is already
-        // in its new parent, so isConnected is true.
+        // Core keeps a mounted DOM view alive across a move: the custom-element
+        // callbacks run after the node is already in its new parent, so
+        // isConnected is true.
         if (this.#movedView) {
           this.#movedView = false;
           return;
@@ -306,7 +303,6 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
     async disconnectedCallback () {
       try {
         // A move keeps the mounted tree (and its effects/listeners) alive.
-        if (getRenderAdapter()?.onDisconnect?.(this)) return;
         if (this.#mountedView && this.isConnected) {
           this.#movedView = true;
           return;
@@ -347,16 +343,15 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
       this.#renderEffects.forEach(c => c());
       this.#renderEffects = [];
       this.#disposeView();
-      getRenderAdapter()?.cleanup?.(this);
     }
 
     // ---------- View Contract ----------
     /**
-     * Current render scope. Created by the core when no render adapter owns
-     * the lifecycle; also the ambient scope while render() runs.
+     * Current render scope. Core creates one for every render, so bindings
+     * registered while `render()` runs are disposed with the component.
      */
     get renderScope () {
-      return this.#renderScope ?? getCurrentScope();
+      return this.#renderScope;
     }
 
     /**
@@ -464,30 +459,26 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
         const pre = this.pre();
         if (pre instanceof Promise) await pre;
 
-        // Optional render plugin (for example the separate veda-jsx package).
-        // Without an adapter the core owns the per-render view scope.
+        // Core owns the per-render view scope. An optional adapter may only
+        // wrap the author's render() call; it always runs inside this scope.
+        const scope = createScope(this);
+        this.#renderScope = scope;
+
         const adapter = getRenderAdapter();
-        adapter?.beforeUpdate?.(this);
-
-        const coreScope = adapter ? null : createScope(this);
-        if (coreScope) this.#renderScope = coreScope;
-
         const renderFn = () => this.render();
+
         let output;
         try {
-          output = coreScope
-            ? await runInScope(coreScope, renderFn)
-            : adapter?.render
-              ? await adapter.render(this, renderFn)
-              : await renderFn();
+          output = await runInScope(scope, () =>
+            adapter?.render ? adapter.render(this, renderFn) : renderFn()
+          );
         } catch (error) {
-          if (coreScope) this.#disposeView();
+          this.#disposeView();
           throw error;
         }
 
         if (typeof output === 'undefined') {
-          adapter?.afterUpdate?.(this, output);
-          if (coreScope) this.#disposeView();
+          this.#disposeView();
           const post = this.post();
           if (post instanceof Promise) await post;
           return;
@@ -497,8 +488,7 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
 
         if (typeof output === 'string') {
           // ═══ Existing string-template path: unchanged ═══
-          adapter?.afterUpdate?.(this, output);
-          if (coreScope) this.#disposeView();
+          this.#disposeView();
 
           output = output.replaceAll(marker, '');
           let template = document.createElement('template');
@@ -526,7 +516,6 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
           container.replaceChildren(...nodes);
           this.#viewDispose = viewState.dispose;
           this.#mountedView = true;
-          adapter?.afterUpdate?.(this, output);
 
           if (typeof window !== 'undefined' && window.__VEDA_DEVTOOLS_HOOK__) {
             window.__VEDA_DEVTOOLS_HOOK__.trackComponentRender(this, _renderStart);
@@ -536,8 +525,6 @@ export default function Component (ElementClass = HTMLElement, ModelClass = Mode
           if (post instanceof Promise) await post;
         }
       } catch (error) {
-        // The adapter decides whether a failed render left a live tree.
-        getRenderAdapter()?.onError?.(this);
         this.#disposeView();
         console.log(this, 'Component render error', error);
       }

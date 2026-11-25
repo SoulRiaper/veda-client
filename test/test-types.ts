@@ -131,15 +131,9 @@ function testValue() {
 // Test render-plugin API types
 function testPluginApi() {
   const unregister = registerRenderAdapter({
-    beforeUpdate(_component) {},
     render(_component, renderFn) {
       return renderFn();
     },
-    afterUpdate(_component, _output) {},
-    onConnect(_component) { return false; },
-    onDisconnect(_component) { return false; },
-    cleanup(_component) {},
-    onError(_component) {}
   });
   unregister();
 

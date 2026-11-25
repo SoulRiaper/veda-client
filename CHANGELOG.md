@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Generic render-adapter hook (`registerRenderAdapter`) and DOM output mounting
+- Optional `registerRenderAdapter` render hook; core owns DOM output mounting,
+  the per-render view scope, cleanup and move handling
 - `veda-client/plugin-api` extension entry for standalone render plugins,
   including the shared view-scope primitives (`createScope`, `runInScope`,
   `disposeScope`, `scopedEffect`, `addCleanup`, `listen`)
